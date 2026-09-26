@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#2a1233" />
     <title>뽕짝 가위바위보 vs Claude</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,36 +14,47 @@
 
     <div id="hud">
       <header id="title">
-        <h1><span>뽕</span><span>짝</span> 가위바위보</h1>
-        <p>vs Claude ✨</p>
+        <div class="sign">
+          <h1><span>뽕</span><span>짝</span> 가위바위보</h1>
+          <p>vs Claude</p>
+        </div>
       </header>
 
-      <div id="score">
-        <div class="side you"><b id="s-you">0</b><small>님</small></div>
-        <div class="mid"><small>무승부</small><b id="s-draw">0</b></div>
-        <div class="side cpu"><b id="s-cpu">0</b><small>Claude</small></div>
+      <div id="toggles">
+        <button id="bgm" class="toggle" aria-pressed="false" title="배경음악 켜기/끄기">
+          <i>🎵</i><span>BGM</span><b>OFF</b>
+        </button>
+        <button id="sfx" class="toggle" aria-pressed="true" title="효과음 켜기/끄기">
+          <i>🔊</i><span>효과음</span><b>ON</b>
+        </button>
       </div>
-      <div id="streak"></div>
 
-      <div id="bubble"><span></span></div>
-      <div id="tag-you">님 손 👇</div>
-      <div id="call"></div>
+      <aside id="board">
+        <div id="score">
+          <div class="side you"><b id="s-you">0</b><small>님</small></div>
+          <div class="mid"><b id="s-draw">0</b><small>무승부</small></div>
+          <div class="side cpu"><b id="s-cpu">0</b><small>Claude</small></div>
+        </div>
+        <ol id="history" aria-label="최근 전적"></ol>
+        <div id="streak"></div>
+      </aside>
 
-      <nav id="controls">
+      <div id="bubble" aria-live="polite"><span></span></div>
+      <div id="call" aria-live="assertive"><b></b><small></small></div>
+
+      <nav id="controls" aria-label="낼 손 고르기">
         <button data-move="scissors"><i>✌️</i><span>가위</span><kbd>1</kbd></button>
         <button data-move="rock"><i>✊</i><span>바위</span><kbd>2</kbd></button>
         <button data-move="paper"><i>🖐️</i><span>보</span><kbd>3</kbd></button>
       </nav>
-
-      <button id="music" title="음악 켜기/끄기">🎵</button>
     </div>
 
     <div id="start">
       <div class="card">
         <h2>✨ 뽕짝 가위바위보 ✨</h2>
-        <p>Claude랑 한 판 붙어요!<br />박자에 맞춰 <b>가위! 바위! 보!</b></p>
+        <p>무대 위 Claude랑 한 판 붙어요!<br />박자에 맞춰 <b>가위! 바위! 보!</b></p>
         <button id="go">🎤 쿵짝 시작!</button>
-        <small>키보드 1 · 2 · 3 으로도 낼 수 있어요 (소리 켜주세요 🔊)</small>
+        <small>배경음악은 꺼져 있어요 · 왼쪽 위 🎵 버튼으로 켜기<br />키보드 1 · 2 · 3 으로도 낼 수 있어요</small>
       </div>
     </div>
 

@@ -1,10 +1,31 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import './style.css';
 import { Music } from './audio.js';
 import { Hand } from './hand.js';
 import { ClaudeBuddy } from './claude.js';
 import { Stage } from './stage.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------- 설정 저장 (브라우저별 편의용) ----------
+const prefs = {
+  get(key, fallback) {
+    try {
+      const v = localStorage.getItem(`rps.${key}`);
+      return v === null ? fallback : v === '1';
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, on) {
+    try {
+      localStorage.setItem(`rps.${key}`, on ? '1' : '0');
+    } catch {
+      /* 저장 못 해도 게임은 그대로 */
+    }
+  },
+};
 
 // ---------- 기본 세팅 ----------
 const canvas = document.getElementById('scene');
@@ -13,63 +34,87 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x2a1233, 16, 30);
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-const camTarget = new THREE.Vector3(0, 1.2, 0);
+scene.fog = new THREE.Fog(0x2a1233, 18, 34);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 
-scene.add(new THREE.HemisphereLight(0xfff0f5, 0x442255, 1.6));
-const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-sun.position.set(3, 6, 8);
-scene.add(sun);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+const camBase = new THREE.Vector3();
+const camTarget = new THREE.Vector3();
+let baseFov = 42;
 
-const pmrem = new THREE.PMREMGenerator(renderer);
-const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.add(new THREE.HemisphereLight(0xfff0f5, 0x442255, 1.5));
+const key = new THREE.DirectionalLight(0xffffff, 2.1);
+key.position.set(3, 6, 8);
+const rim = new THREE.DirectionalLight(0xff7ab8, 1.4);
+rim.position.set(-3, 5, -6);
+scene.add(key, rim);
 
 const stage = new Stage(scene);
-stage.disco.material.envMap = envMap;
-const music = new Music();
+const music = new Music({ musicOn: prefs.get('bgm', false), sfxOn: prefs.get('sfx', true) });
 
 const claude = new ClaudeBuddy();
-claude.root.position.set(0.9, 0, 0);
-scene.add(claude.root);
+claude.root.position.set(0.8, 0, -0.2);
+scene.add(claude.root, claude.world);
+stage.setShadow(0.8, 0.05);
 
-const cpuHand = new Hand({ color: 0xffb38a, cuff: 0xd97757 });
-cpuHand.root.position.set(-0.75, 0.85, 1.1);
-cpuHand.root.rotation.set(0.15, 0.35, 0.35);
-cpuHand.root.scale.setScalar(0.85);
+// Claude 손 (고무호스 팔로 몸에 연결)
+const cpuHand = new Hand({ color: 0xe8825c, cuffRing: 0xf6a27c });
+cpuHand.root.position.set(-0.72, 0.78, 0.95);
+cpuHand.root.rotation.set(0.1, 0.4, 0.3);
+cpuHand.root.scale.setScalar(0.8);
 scene.add(cpuHand.root);
+claude.attachHand(cpuHand);
 
-const youHand = new Hand({ color: 0xffe0c2, cuff: 0x3ea8ff, mirror: true });
-youHand.root.position.set(-2.7, 0.55, 2.6);
-youHand.root.rotation.set(-0.1, 0.5, -0.3);
-youHand.root.scale.setScalar(0.9);
+// 님 손 (객석에서 쑥 올라온 흰 장갑)
+const youHand = new Hand({ color: 0xfffaf2, cuff: 0x3ea8ff, sleeve: 3.4, mirror: true });
+youHand.root.position.set(-2.7, 0.5, 2.7);
+youHand.root.rotation.set(-0.15, 0.55, -0.28);
+youHand.root.scale.setScalar(0.88);
 scene.add(youHand.root);
 
-addEventListener('resize', resize);
-resize();
-
-function resize() {
+function layout() {
   const w = innerWidth;
   const h = innerHeight;
   renderer.setSize(w, h, false);
-  camera.aspect = w / h;
-  // 세로 화면이면 뒤로 물러나서 다 보이게
-  const dist = camera.aspect < 1 ? 9 + (1 / camera.aspect - 1) * 7 : 9;
-  camera.userData.base = new THREE.Vector3(-0.4, 2.3, dist);
-  youHand.root.position.x = camera.aspect < 1 ? -1.9 : -2.7;
+  const a = (camera.aspect = w / h);
+  const portrait = a < 1;
+  baseFov = portrait ? 50 : 42;
+  // 두 손 + Claude가 가로로 다 들어오는 거리. 좁을수록 물러나되 높이 올라가서
+  // 객석이 무대를 가리지 않게 내려다봄
+  const tanH = Math.tan(THREE.MathUtils.degToRad(baseFov / 2)) * a;
+  const halfW = portrait ? 2.6 : 3.3;
+  const dist = Math.max(9.4, halfW / tanH);
+  const extra = dist - 9.4;
+  const cx = portrait ? 0.05 : -0.4;
+  camBase.set(cx - (portrait ? 0 : 0.05), 2.4 + extra * 0.72, dist);
+  camTarget.set(cx, 0.95 - extra * 0.36, 0);
+  scene.fog.near = dist + 9;
+  scene.fog.far = dist + 26;
+  // 세로 화면은 폭이 좁으니 셋을 가운데로 모음
+  const claudeX = portrait ? 0.62 : 0.8;
+  claude.root.position.x = claudeX;
+  stage.setShadow(claudeX, 0.05);
+  cpuHand.root.position.set(claudeX - (portrait ? 1.42 : 1.52), portrait ? 0.86 : 0.78, 0.95);
+  youHand.root.position.set(portrait ? -1.45 : -2.7, portrait ? -0.05 : 0.5, portrait ? 2.9 : 2.7);
+  stage.setLayout(portrait);
+  camera.fov = baseFov;
   camera.updateProjectionMatrix();
 }
+addEventListener('resize', layout);
+layout();
 
 // ---------- UI ----------
 const $ = (s) => document.querySelector(s);
 const bubble = $('#bubble');
 const bubbleText = bubble.querySelector('span');
-const tagYou = $('#tag-you');
 const callEl = $('#call');
+const callMain = callEl.querySelector('b');
+const callSub = callEl.querySelector('small');
 const controls = $('#controls');
 const buttons = [...controls.querySelectorAll('button')];
 const scoreEls = { you: $('#s-you'), cpu: $('#s-cpu'), draw: $('#s-draw') };
 const streakEl = $('#streak');
+const historyEl = $('#history');
 
 let bubbleTimer = 0;
 function say(text, secs = 2.8) {
@@ -80,9 +125,10 @@ function say(text, secs = 2.8) {
   bubbleTimer = secs;
 }
 
-function showCall(text, cls = '') {
+function showCall(text, cls = '', sub = '') {
   callEl.className = '';
-  callEl.textContent = text;
+  callMain.textContent = text;
+  callSub.textContent = sub;
   void callEl.offsetWidth;
   callEl.className = `go ${cls}`;
 }
@@ -94,6 +140,19 @@ function bumpScore(el, value) {
   el.classList.add('bump');
 }
 
+const EMOJI = { rock: '✊', scissors: '✌️', paper: '🖐️' };
+const NAME = { rock: '바위', scissors: '가위', paper: '보' };
+const history = [];
+function pushHistory(result, you, cpu) {
+  history.push(result);
+  const li = document.createElement('li');
+  li.className = result;
+  li.textContent = { win: '승', lose: '패', draw: '무' }[result];
+  li.title = `님 ${NAME[you]} vs ${NAME[cpu]} Claude`;
+  historyEl.append(li);
+  while (historyEl.children.length > 8) historyEl.firstElementChild.remove();
+}
+
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
 const LINES = {
@@ -103,9 +162,11 @@ const LINES = {
     '제 손이 근질근질해요 ✊',
     '쿵짝쿵짝~ 박자 타는 중',
     '님 다음에 뭐 낼지 궁금하당 👀',
+    '가위? 바위? 보? 두근두근',
   ],
-  win: ['아싸 가오리~! 😎', '이 몸이 이겼당 ✨', '얼씨구 좋다~ 🎺', '제가 좀 하죠? 후훗', '노래 한 곡 뽑겠습니다~ 🎤'],
+  win: ['아싸 가오리~! 😎', '이 몸이 이겼당 ✨', '얼씨구 좋다~ 🎺', '제가 좀 하죠? 후훗', '승리의 노래 한 곡~ 🎤'],
   lose: ['흑흑 내 손이 미끄러졌어요 😭', '한 판만 더!! 제발!', '님 혹시 고수…?', '으앙 분하다아~', '다음엔 안 봐줘요! 😤'],
+  streak: ['님 뭐예요… 무서워요 😱', '연승 행진이다~ 🎉', '제 패턴 들켰나요?!'],
   draw: ['어머 우리 통했나봐 💕', '천생연분인가요~?', '띠용! 똑같네?', '마음이 통했다 짠!'],
   read: ['님 패턴 읽었다구요 🧐', '이번엔 이걸 낼 줄 알았지롱~', '다 보여요 다 보여 👀'],
 };
@@ -147,6 +208,9 @@ let streak = 0;
 let state = 'intro'; // intro | idle | countdown | result
 let shaking = false;
 let energy = 0.6;
+let punch = 0;
+let shake = 0;
+let previewing = false;
 const events = []; // {time, fn} — 오디오 시계 기준
 
 function schedule(time, fn) {
@@ -163,57 +227,66 @@ function play(move) {
 
   const cpuMove = claudeChooses();
   const b = music.beatDur;
-  const t0 = music.nextBeatAfter(music.now + 0.08);
+  const t0 = music.countdownStart();
 
   youHand.setPose('rock');
   cpuHand.setPose('rock');
-  claude.setExpression('normal');
-  stage.setMood(0xff3e7f);
+  claude.setExpression('focus');
+  stage.setMood('party');
   bubble.classList.remove('show');
+  shaking = true;
 
-  const words = ['가위!', '바위!', '보!'];
-  words.forEach((w, i) => {
+  ['가위!', '바위!', '보!'].forEach((w, i) => {
     const t = t0 + i * b;
-    music.blip(t, 1 + i * 0.25);
-    if (i === 2) music.reveal(t);
+    if (i < 2) music.blip(t, i === 0 ? 1 : 1.26);
+    else music.reveal(t);
     schedule(t, () => {
       showCall(w);
       claude.shout = 1;
-      if (i === 0) shaking = true;
       if (i === 2) reveal(move, cpuMove);
     });
   });
 }
 
+const tmpV = new THREE.Vector3();
 function reveal(you, cpu) {
   shaking = false;
+  state = 'result';
   youHand.setPose(you, true);
   cpuHand.setPose(cpu, true);
+  stage.pows.pop(youHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0, 0.3, -0.4)), 2.2);
+  stage.pows.pop(cpuHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0, 0.25, -0.35)), 1.7);
+  if (!reduceMotion) {
+    punch = 1;
+    shake = 1;
+  }
   remember(you);
 
   const result = you === cpu ? 'draw' : BEATS[you] === cpu ? 'win' : 'lose';
-  const t = music.now + music.beatDur;
+  const sub = `님 ${EMOJI[you]} vs ${EMOJI[cpu]} Claude`;
+  const t = music.now + music.beatDur * 0.55;
 
   schedule(t, () => {
+    pushHistory(result, you, cpu);
     if (result === 'win') {
       score.you++;
       streak = streak > 0 ? streak + 1 : 1;
       bumpScore(scoreEls.you, score.you);
-      showCall(streak >= 3 ? `${streak}연승!!` : '이겼다!!', 'win');
+      showCall(streak >= 3 ? `${streak}연승!!` : '이겼다!!', 'win', sub);
       claude.setExpression('sad');
-      stage.setMood(0x3ea8ff);
-      stage.confetti.burst(new THREE.Vector3(-2.2, 1.5, 2.2), 220, 1.1);
+      stage.setMood('win');
+      stage.confetti.burst(youHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0.3, 0.8, 0)), 200, 1);
       music.fanfare(music.now);
-      say(pick(LINES.lose));
+      say(streak >= 3 ? pick(LINES.streak) : pick(LINES.lose));
       energy = 1.4;
     } else if (result === 'lose') {
       score.cpu++;
       streak = streak < 0 ? streak - 1 : -1;
       bumpScore(scoreEls.cpu, score.cpu);
-      showCall('졌다…', 'lose');
+      showCall('졌다…', 'lose', sub);
       claude.setExpression('cool');
-      stage.setMood(0xff7a2e);
-      stage.confetti.burst(new THREE.Vector3(0.9, 1.5, 0.5), 120, 0.8);
+      stage.setMood('lose');
+      stage.confetti.burst(new THREE.Vector3(0.8, 1.6, 0), 90, 0.7);
       music.sad(music.now);
       say(lastWasRead && Math.random() < 0.6 ? pick(LINES.read) : pick(LINES.win));
       energy = 1.6;
@@ -221,17 +294,18 @@ function reveal(you, cpu) {
       score.draw++;
       streak = 0;
       bumpScore(scoreEls.draw, score.draw);
-      showCall('비겼당~', 'draw');
+      showCall('비겼당~', 'draw', sub);
       claude.setExpression(Math.random() < 0.5 ? 'shock' : 'happy');
-      stage.setMood(0xb45cff);
+      stage.setMood('draw');
+      stage.floaters.emit('heart', new THREE.Vector3(-1.4, 1.4, 1.6), 6, 1.6);
       music.boing(music.now);
       say(pick(LINES.draw));
-      energy = 1;
+      energy = 1.1;
     }
     streakEl.textContent = streak >= 2 ? `🔥 ${streak}연승 중!` : streak <= -2 ? `💧 ${-streak}연패…` : '';
   });
 
-  schedule(t + music.beatDur * 1.5, () => {
+  schedule(t + music.beatDur * 1.2, () => {
     callEl.classList.add('fade');
     state = 'idle';
     controls.classList.remove('locked');
@@ -241,18 +315,17 @@ function reveal(you, cpu) {
   schedule(t + music.beatDur * 8, () => {
     if (state === 'idle') {
       claude.setExpression('normal');
-      stage.setMood(0xff3e7f);
-      energy = 0.8;
+      stage.setMood('party');
+      energy = 0.9;
     }
   });
 }
 
-let previewing = false;
 buttons.forEach((btn) => {
   btn.addEventListener('click', () => play(btn.dataset.move));
   // pointerenter는 버튼 잠금이 풀릴 때도 발생해서 결과 손 모양을 덮어버림 → 실제 움직임에만 반응
-  btn.addEventListener('pointermove', () => {
-    if (state !== 'idle' || youHand.pose === btn.dataset.move) return;
+  btn.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse' || state !== 'idle' || youHand.pose === btn.dataset.move) return;
     youHand.setPose(btn.dataset.move);
     previewing = true;
     music.hover();
@@ -264,15 +337,44 @@ buttons.forEach((btn) => {
 });
 
 addEventListener('keydown', (e) => {
+  if (e.repeat) return;
   const move = { 1: 'scissors', 2: 'rock', 3: 'paper' }[e.key];
   if (move) play(move);
-  if (e.key === 'Enter' && state === 'intro') begin();
+  if ((e.key === 'Enter' || e.key === ' ') && state === 'intro') {
+    e.preventDefault();
+    begin();
+  }
 });
 
-const musicBtn = $('#music');
-musicBtn.addEventListener('click', () => {
-  musicBtn.classList.toggle('off', !music.toggleMusic());
-});
+// ---------- 소리 스위치 ----------
+function bindToggle(el, keyName, get, set) {
+  const render = () => {
+    const on = get();
+    el.setAttribute('aria-pressed', String(on));
+    el.querySelector('b').textContent = on ? 'ON' : 'OFF';
+  };
+  el.addEventListener('click', () => {
+    set(!get());
+    prefs.set(keyName, get());
+    render();
+  });
+  render();
+}
+bindToggle(
+  $('#bgm'),
+  'bgm',
+  () => music.musicOn,
+  (on) => {
+    if (on) music.start();
+    music.setMusic(on);
+  },
+);
+bindToggle(
+  $('#sfx'),
+  'sfx',
+  () => music.sfxOn,
+  (on) => music.setSfx(on),
+);
 
 function begin() {
   if (state !== 'intro') return;
@@ -280,7 +382,7 @@ function begin() {
   $('#start').classList.add('hide');
   state = 'idle';
   energy = 1;
-  say('안녕하세요~ Claude예요! 🎤\n가위바위보 한 판 콜?', 3.5);
+  say('Claude예요~ 🎤\n가위바위보 한 판 콜?', 3.5);
 }
 $('#go').addEventListener('click', begin);
 
@@ -292,12 +394,24 @@ addEventListener('pointermove', (e) => {
 // ---------- 루프 ----------
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
+const headAnchor = new THREE.Vector3(0.35, 1.75, 0);
+const micHead = new THREE.Vector3();
 let idleChat = 6;
+let beat = 0;
 let lastPhase = 0;
 
 function toScreen(obj, offset) {
   tmp.copy(offset).applyMatrix4(obj.matrixWorld).project(camera);
   return [((tmp.x + 1) / 2) * innerWidth, ((1 - tmp.y) / 2) * innerHeight];
+}
+
+function onBeat(n) {
+  beat = n;
+  stage.onBeat(n);
+  if (claude.expression === 'cool' && claude.sing > 0.5) {
+    claude.mic.localToWorld(micHead.set(0, 0.5, 0));
+    stage.floaters.emit('note', micHead, 1, 0.3);
+  }
 }
 
 function tick() {
@@ -308,50 +422,54 @@ function tick() {
   // 오디오 시계로 예약된 이벤트 실행
   while (events.length && events[0].time <= music.now) events.shift().fn();
 
-  // 음악 비트에 맞춘 무대 연출
+  // 박자에 맞춘 무대 연출 (음악이 꺼져 있어도 박자 시계는 돎)
   if (music.started) {
-    while (music.beatQueue.length && music.beatQueue[0].time <= music.now) {
-      const { beat, bar } = music.beatQueue.shift();
-      stage.onBeat(bar * 4 + beat);
-    }
+    while (music.beatQueue.length && music.beatQueue[0].time <= music.now) onBeat(music.beatQueue.shift().beat);
   } else if (phase < lastPhase) {
-    stage.onBeat((time * 2) | 0);
+    onBeat(beat + 1);
   }
   lastPhase = phase;
 
-  energy += ((state === 'intro' ? 0.6 : 1) - energy) * dt * 0.5;
-  stage.update(dt, time);
-  claude.look.lerp(pointer, 0.1);
-  claude.update(dt, time, phase, energy);
+  energy += ((state === 'intro' ? 0.7 : 1) - energy) * dt * 0.5;
+  stage.update(dt, time, phase, beat, reduceMotion);
 
-  // 손 흔들기: 박자마다 위로 올렸다가 정박에 쾅
-  const lift = shaking ? Math.sin(phase * Math.PI) * 0.45 : Math.sin(phase * Math.PI) * 0.06;
-  cpuHand.body.position.y = lift;
-  youHand.body.position.y = lift;
-  cpuHand.root.rotation.z = 0.35 + (shaking ? Math.sin(phase * Math.PI) * 0.2 : Math.sin(time * 2.2) * 0.05);
-  youHand.root.rotation.z = -0.3 - (shaking ? Math.sin(phase * Math.PI) * 0.2 : Math.sin(time * 2.2 + 1) * 0.05);
+  // 손 흔들기: 박 사이에 올렸다가 정박에 쾅
+  const up = Math.sin(phase * Math.PI);
+  cpuHand.lift = shaking ? up * 0.42 : up * 0.05;
+  youHand.lift = shaking ? up * 0.42 : up * 0.05;
+  cpuHand.root.rotation.z = 0.3 + (shaking ? up * 0.22 : Math.sin(time * 2.2) * 0.05);
+  youHand.root.rotation.z = -0.28 - (shaking ? up * 0.22 : Math.sin(time * 2.2 + 1) * 0.05);
   cpuHand.update(dt);
   youHand.update(dt);
 
-  // 카메라 살랑살랑
-  const base = camera.userData.base;
+  claude.look.lerp(state === 'countdown' ? tmp.set(-0.8, 0.1, 0) : pointer, 0.1);
+  claude.update(dt, time, phase, beat, energy);
+
+  // 카메라: 살랑살랑 + 공개 순간 살짝 줌인/흔들
+  punch = Math.max(0, punch - dt * 2.5);
+  shake = Math.max(0, shake - dt * 4);
+  const sway = reduceMotion ? 0 : 1;
   camera.position.set(
-    base.x + Math.sin(time * 0.4) * 0.35 + pointer.x * 0.3,
-    base.y + Math.sin(time * 0.6) * 0.12 + pointer.y * 0.15,
-    base.z,
+    camBase.x + (Math.sin(time * 0.4) * 0.3 + pointer.x * 0.25) * sway + (Math.random() - 0.5) * 0.08 * shake,
+    camBase.y + (Math.sin(time * 0.6) * 0.1 + pointer.y * 0.12) * sway + (Math.random() - 0.5) * 0.08 * shake,
+    camBase.z,
   );
   camera.lookAt(camTarget);
-  camera.rotation.z += Math.sin(time * Math.PI * (132 / 60) * 0.5) * 0.006 * energy;
+  camera.rotation.z += Math.sin(((beat + phase) * Math.PI) / 2) * 0.005 * energy * sway;
+  const f = baseFov * (1 - 0.06 * Math.sin(Math.min(1, punch) * Math.PI));
+  if (Math.abs(camera.fov - f) > 1e-3) {
+    camera.fov = f;
+    camera.updateProjectionMatrix();
+  }
 
-  // HUD를 3D 위치에 붙이기
-  claude.root.updateMatrixWorld();
-  const [bx, by] = toScreen(claude.root, new THREE.Vector3(0.6, 1.9, 0));
-  bubble.style.left = `${Math.max(16, Math.min(bx - 30, innerWidth - bubble.offsetWidth - 16))}px`;
-  bubble.style.top = `${by}px`;
-  const [yx, yy] = toScreen(youHand.root, new THREE.Vector3(0, 1.3, 0));
-  tagYou.style.left = `${yx}px`;
-  tagYou.style.top = `${yy}px`;
-  tagYou.style.opacity = state === 'idle' ? 1 : 0;
+  // 말풍선을 Claude 머리 옆에 붙이기 (꼬리는 머리를 가리킴)
+  const [hx, hy] = toScreen(claude.root, headAnchor);
+  const bw = bubble.offsetWidth;
+  const bh = bubble.offsetHeight;
+  const left = Math.max(12, Math.min(hx - 18, innerWidth - bw - 12));
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${Math.max(8, hy - bh - 16)}px`;
+  bubble.style.setProperty('--tail', `${Math.max(14, Math.min(hx - left - 8, bw - 28))}px`);
 
   if (bubbleTimer > 0) {
     bubbleTimer -= dt;
@@ -367,7 +485,16 @@ function tick() {
     idleChat = 7;
   }
 
+  // 개발용: window.__rps.cam = { pos: [x,y,z], target: [x,y,z] } 로 카메라 고정
+  const dbg = import.meta.env.DEV && window.__rps?.cam;
+  if (dbg) {
+    camera.position.fromArray(dbg.pos);
+    camera.lookAt(...dbg.target);
+  }
+
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
 tick();
+
+if (import.meta.env.DEV) window.__rps = { THREE, scene, camera, claude, cpuHand, youHand, stage, music };

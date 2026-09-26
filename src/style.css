@@ -3,8 +3,11 @@
   --yellow: #ffe45e;
   --cyan: #3ef2ff;
   --purple: #b45cff;
+  --orange: #ff9b6a;
   --ink: #2a1233;
+  --night: rgba(28, 8, 38, 0.82);
   --cream: #fff6e0;
+  --gutter: 16px;
 }
 
 * {
@@ -21,6 +24,10 @@ body {
   color: var(--cream);
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+}
+
+button {
+  font: inherit;
 }
 
 #scene {
@@ -40,47 +47,56 @@ body {
 /* ---------- 타이틀: 네온 간판 ---------- */
 #title {
   position: absolute;
-  top: max(12px, env(safe-area-inset-top));
+  top: max(10px, env(safe-area-inset-top));
   left: 0;
   right: 0;
   text-align: center;
+}
+#title .sign {
+  display: inline-block;
+  padding: 4px 22px 6px;
+  border-radius: 18px;
+  background: var(--night);
+  border: 3px solid var(--pink);
+  box-shadow:
+    0 0 0 3px var(--ink),
+    0 0 18px rgba(255, 62, 127, 0.8),
+    inset 0 0 16px rgba(255, 62, 127, 0.35);
+  animation: flicker 4s infinite;
 }
 #title h1 {
   margin: 0;
   font-family: 'Black Han Sans', sans-serif;
   font-weight: 400;
-  font-size: clamp(28px, 6vw, 56px);
-  letter-spacing: 0.04em;
+  font-size: clamp(26px, 4.6vw, 48px);
+  line-height: 1.1;
+  letter-spacing: 0.03em;
   color: #fff;
   text-shadow:
-    0 0 6px #fff,
-    0 0 14px var(--pink),
-    0 0 28px var(--pink),
-    4px 4px 0 var(--ink);
-  animation: flicker 3.2s infinite;
+    0 0 4px #fff,
+    0 0 12px var(--pink),
+    0 0 24px var(--pink);
 }
 #title h1 span {
   display: inline-block;
   color: var(--yellow);
   text-shadow:
-    0 0 10px var(--yellow),
-    0 0 24px #ff9b3e,
-    4px 4px 0 var(--ink);
+    0 0 8px var(--yellow),
+    0 0 20px #ff9b3e;
   animation: bop 0.4545s infinite alternate ease-in-out;
 }
 #title h1 span:nth-child(2) {
   animation-delay: 0.227s;
   color: var(--cyan);
   text-shadow:
-    0 0 10px var(--cyan),
-    0 0 24px #3e8bff,
-    4px 4px 0 var(--ink);
+    0 0 8px var(--cyan),
+    0 0 20px #3e8bff;
 }
 #title p {
   margin: 0;
-  font-size: clamp(14px, 2.4vw, 20px);
+  font-size: clamp(13px, 1.8vw, 17px);
+  letter-spacing: 0.2em;
   color: var(--yellow);
-  text-shadow: 2px 2px 0 var(--ink);
 }
 
 @keyframes bop {
@@ -88,50 +104,109 @@ body {
     transform: translateY(0) rotate(-6deg);
   }
   to {
-    transform: translateY(-6px) rotate(6deg) scale(1.08);
+    transform: translateY(-4px) rotate(6deg) scale(1.08);
   }
 }
 @keyframes flicker {
   0%,
-  92%,
+  93%,
   100% {
-    opacity: 1;
+    border-color: var(--pink);
   }
-  93% {
-    opacity: 0.5;
-  }
-  95% {
-    opacity: 1;
-  }
+  94%,
   96% {
-    opacity: 0.6;
+    border-color: #6a1f3f;
   }
 }
 
-/* ---------- 점수판 ---------- */
-#score {
+/* ---------- 소리 스위치 ---------- */
+#toggles {
   position: absolute;
   top: max(12px, env(safe-area-inset-top));
-  right: 16px;
+  left: var(--gutter);
   display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.toggle {
+  display: flex;
+  align-items: center;
   gap: 6px;
-  align-items: stretch;
-  background: rgba(42, 18, 51, 0.72);
+  height: 40px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  border: 3px solid var(--ink);
+  background: var(--cream);
+  color: var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.toggle:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+.toggle i {
+  font-style: normal;
+  font-size: 18px;
+  line-height: 1;
+}
+.toggle b {
+  font-family: 'Black Han Sans', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: #b9aebf;
+  color: #fff;
+}
+.toggle[aria-pressed='true'] b {
+  background: var(--pink);
+}
+.toggle[aria-pressed='false'] i {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.toggle:focus-visible,
+#controls button:focus-visible,
+#go:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+/* ---------- 점수판 ---------- */
+#board {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: var(--gutter);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+#score {
+  display: flex;
+  gap: 4px;
+  background: var(--night);
   border: 3px solid var(--yellow);
   border-radius: 18px;
-  padding: 6px 10px;
-  box-shadow: 0 0 16px rgba(255, 228, 94, 0.5);
+  padding: 6px 10px 4px;
+  box-shadow:
+    0 0 0 3px var(--ink),
+    0 0 16px rgba(255, 228, 94, 0.45);
 }
 #score > div {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 46px;
+  min-width: 50px;
 }
 #score b {
   font-family: 'Black Han Sans', sans-serif;
   font-weight: 400;
-  font-size: 28px;
+  font-size: 30px;
   line-height: 1;
 }
 #score small {
@@ -142,11 +217,12 @@ body {
   color: var(--cyan);
 }
 #score .cpu b {
-  color: #ff9b6a;
+  color: var(--orange);
 }
 #score .mid b {
-  color: #fff;
-  font-size: 20px;
+  color: #e7d6ff;
+  font-size: 22px;
+  margin-top: 4px;
 }
 #score b.bump {
   animation: bump 0.5s;
@@ -157,26 +233,53 @@ body {
   }
 }
 
+#history {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-height: 22px;
+}
+#history li {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  animation: pop 0.3s cubic-bezier(0.3, 1.8, 0.5, 1);
+}
+#history li.win {
+  background: var(--cyan);
+}
+#history li.lose {
+  background: var(--orange);
+}
+#history li.draw {
+  background: #d9c2ff;
+}
+
 #streak {
-  position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + 70px);
-  right: 16px;
-  font-size: 16px;
+  font-size: 15px;
   color: var(--yellow);
   text-shadow: 2px 2px 0 var(--ink);
+  min-height: 1em;
 }
 
 /* ---------- 말풍선 ---------- */
 #bubble {
   position: absolute;
-  transform: translateY(-100%);
+  --tail: 20px;
   width: max-content;
-  max-width: min(260px, 62vw);
+  max-width: min(260px, 64vw);
   background: #fff;
   color: var(--ink);
   border: 3px solid var(--ink);
   border-radius: 20px;
-  padding: 10px 14px;
+  padding: 9px 14px;
   font-size: 18px;
   line-height: 1.3;
   white-space: pre-line;
@@ -194,11 +297,16 @@ body {
 #bubble::after {
   content: '';
   position: absolute;
-  left: 14px;
-  bottom: -14px;
-  border: 8px solid transparent;
-  border-top: 10px solid var(--ink);
-  border-left: 10px solid var(--ink);
+  left: var(--tail);
+  bottom: -16px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-right: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+  transform: skewX(-25deg) rotate(45deg);
+  transform-origin: center;
+  translate: 0 -6px;
 }
 @keyframes pop {
   from {
@@ -206,56 +314,72 @@ body {
   }
 }
 
-#tag-you {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  font-size: 16px;
-  color: var(--cyan);
-  text-shadow: 2px 2px 0 var(--ink);
-  white-space: nowrap;
-}
-
 /* ---------- 가위! 바위! 보! ---------- */
 #call {
   position: absolute;
   left: 50%;
-  top: 44%;
+  top: 30%;
   transform: translate(-50%, -50%);
-  font-family: 'Black Han Sans', sans-serif;
-  font-size: clamp(56px, 13vw, 140px);
+  text-align: center;
   white-space: nowrap;
+  opacity: 0;
+}
+#call b {
+  display: block;
+  font-family: 'Black Han Sans', sans-serif;
+  font-weight: 400;
+  font-size: clamp(56px, 11vw, 128px);
+  line-height: 1;
   color: #fff;
-  -webkit-text-stroke: 4px var(--ink);
+  -webkit-text-stroke: 5px var(--ink);
   paint-order: stroke fill;
   text-shadow:
     6px 6px 0 var(--ink),
     0 0 30px var(--pink);
 }
+#call small {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: clamp(16px, 2.6vw, 22px);
+  background: var(--night);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 4px 16px;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+#call small:empty {
+  display: none;
+}
 #call.go {
+  opacity: 1;
   animation: slam 0.45s cubic-bezier(0.2, 2, 0.4, 1);
 }
 #call.fade {
   animation: fadeout 0.4s forwards;
 }
-#call.win {
+#call.win b {
   color: var(--yellow);
 }
-#call.lose {
-  color: #6fd3ff;
+#call.lose b {
+  color: #7fdcff;
 }
-#call.draw {
-  color: #ff9bd0;
+#call.draw b {
+  color: #ffb3dc;
 }
 @keyframes slam {
   from {
-    transform: translate(-50%, -50%) scale(2.6) rotate(-12deg);
+    transform: translate(-50%, -50%) scale(2.4) rotate(-10deg);
     opacity: 0;
   }
 }
 @keyframes fadeout {
+  from {
+    opacity: 1;
+  }
   to {
     opacity: 0;
-    transform: translate(-50%, -80%) scale(0.8);
+    transform: translate(-50%, -80%) scale(0.85);
   }
 }
 
@@ -268,25 +392,24 @@ body {
   display: flex;
   justify-content: center;
   gap: clamp(10px, 3vw, 24px);
-  padding: 0 16px;
+  padding: 0 var(--gutter);
   pointer-events: auto;
 }
 #controls button {
   position: relative;
-  width: clamp(84px, 22vw, 124px);
+  width: clamp(62px, min(21vw, 15vh), 118px);
   aspect-ratio: 1;
   border-radius: 50%;
   border: 4px solid var(--ink);
   background: radial-gradient(circle at 35% 30%, #fff 0%, var(--yellow) 45%, #ffb13e 100%);
   box-shadow:
     0 6px 0 var(--ink),
-    0 0 20px rgba(255, 228, 94, 0.6);
+    0 0 20px rgba(255, 228, 94, 0.5);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-family: 'Jua', sans-serif;
   color: var(--ink);
   transition:
     transform 0.12s,
@@ -304,11 +427,11 @@ body {
 }
 #controls button i {
   font-style: normal;
-  font-size: clamp(30px, 8vw, 46px);
+  font-size: clamp(24px, min(7.5vw, 5.6vh), 44px);
   line-height: 1;
 }
 #controls button span {
-  font-size: clamp(16px, 4vw, 22px);
+  font-size: clamp(13px, min(3.8vw, 2.6vh), 21px);
 }
 #controls button kbd {
   position: absolute;
@@ -352,33 +475,14 @@ body {
   }
 }
 
-#music {
-  position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  left: 16px;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: 3px solid var(--ink);
-  background: var(--cream);
-  font-size: 22px;
-  cursor: pointer;
-  pointer-events: auto;
-  box-shadow: 0 4px 0 var(--ink);
-}
-#music.off {
-  filter: grayscale(1);
-  opacity: 0.7;
-}
-
 /* ---------- 시작 화면 ---------- */
 #start {
   position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle, rgba(42, 18, 51, 0.35), rgba(42, 18, 51, 0.8));
-  padding: 16px;
+  background: radial-gradient(circle, rgba(42, 18, 51, 0.3), rgba(42, 18, 51, 0.82));
+  padding: var(--gutter);
   z-index: 5;
   transition: opacity 0.4s;
 }
@@ -392,7 +496,7 @@ body {
   color: var(--ink);
   border: 4px solid var(--ink);
   border-radius: 28px;
-  padding: 24px 28px;
+  padding: 24px 26px;
   box-shadow:
     8px 8px 0 var(--pink),
     0 0 60px rgba(255, 62, 127, 0.6);
@@ -429,22 +533,109 @@ body {
 #start small {
   display: block;
   margin-top: 14px;
-  opacity: 0.7;
+  line-height: 1.5;
+  opacity: 0.75;
 }
 
-@media (max-width: 600px) {
-  #score {
+/* ---------- 좁은 화면 ---------- */
+@media (max-width: 720px) {
+  #toggles {
+    flex-direction: column;
+  }
+  .toggle {
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    justify-content: center;
+    position: relative;
+  }
+  .toggle span {
+    display: none;
+  }
+  .toggle b {
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    translate: -50% 0;
+    font-size: 10px;
+    padding: 2px 4px;
+  }
+  #title {
+    padding: 0 70px;
+  }
+  #board {
     top: auto;
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + clamp(84px, 22vw, 124px) + 20px);
     right: 50%;
-    transform: translateX(50%);
-    padding: 4px 8px;
+    translate: 50% 0;
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + clamp(62px, min(21vw, 15vh), 118px) + 18px);
+    flex-direction: column-reverse;
+  }
+  #score {
+    padding: 4px 8px 2px;
+  }
+  #score b {
+    font-size: 24px;
   }
   #streak {
     display: none;
   }
-  #title {
-    top: max(16px, env(safe-area-inset-top));
-    padding: 0 64px;
+}
+
+/* ---------- 가로로 누운 폰 (낮은 화면) ---------- */
+@media (max-height: 520px) {
+  #title h1 {
+    font-size: 24px;
+  }
+  #title p {
+    display: none;
+  }
+  #title .sign {
+    padding: 2px 16px 4px;
+  }
+  .toggle {
+    height: 34px;
+    font-size: 13px;
+  }
+  #score b {
+    font-size: 22px;
+  }
+  #score .mid b {
+    font-size: 17px;
+  }
+  #streak {
+    display: none;
+  }
+  #call b {
+    font-size: 64px;
+  }
+  #call small {
+    font-size: 15px;
+    margin-top: 6px;
+  }
+  #controls {
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  #controls button {
+    border-width: 3px;
+    box-shadow: 0 4px 0 var(--ink);
+  }
+  #start .card {
+    padding: 14px 20px;
+  }
+  #start h2 {
+    font-size: 24px;
+  }
+  #start p {
+    font-size: 16px;
+    margin-bottom: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #title h1 span,
+  #controls button,
+  #go,
+  #title .sign {
+    animation: none;
   }
 }

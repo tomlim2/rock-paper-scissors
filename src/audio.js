@@ -1,4 +1,5 @@
 // 뽕짝 비트 + 효과음. 전부 WebAudio로 합성합니다 (샘플 파일 없음).
+// 배경음은 기본 꺼짐. 꺼져 있어도 박자 시계는 계속 돌아서 화면 연출은 박자를 탐.
 
 const midiToHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -28,6 +29,8 @@ const MELODY_BARS = [
 
 const STEPS_PER_BAR = 8; // 8분음표 단위
 const LOOP_STEPS = STEPS_PER_BAR * CHORDS.length;
+const MUSIC_VOL = 0.42;
+const SFX_VOL = 0.8;
 
 const MELODY = new Map();
 {
@@ -41,14 +44,16 @@ const MELODY = new Map();
 }
 
 export class Music {
-  constructor() {
+  constructor({ musicOn = false, sfxOn = true } = {}) {
     this.bpm = 132;
     this.beatDur = 60 / this.bpm;
     this.stepDur = this.beatDur / 2;
     this.ctx = null;
     this.started = false;
-    this.musicOn = true;
+    this.musicOn = musicOn;
+    this.sfxOn = sfxOn;
     this.beatQueue = []; // 화면 동기화용 {time, beat}
+    this.beatCount = 0;
   }
 
   start() {
@@ -57,29 +62,32 @@ export class Music {
     const ctx = (this.ctx = new (window.AudioContext || window.webkitAudioContext)());
 
     this.master = ctx.createGain();
-    this.master.gain.value = 0.8;
+    this.master.gain.value = 0.85;
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
+    comp.threshold.value = -16;
     comp.ratio.value = 4;
     this.master.connect(comp).connect(ctx.destination);
 
     this.musicBus = ctx.createGain();
-    this.musicBus.gain.value = 0.55;
+    this.musicBus.gain.value = this.musicOn ? MUSIC_VOL : 0;
     this.musicBus.connect(this.master);
 
     this.sfxBus = ctx.createGain();
-    this.sfxBus.gain.value = 0.9;
+    this.sfxBus.gain.value = this.sfxOn ? SFX_VOL : 0;
     this.sfxBus.connect(this.master);
 
-    // 싸구려 노래방 에코
+    // 노래방 에코 (살짝만)
     const delay = ctx.createDelay();
     delay.delayTime.value = this.beatDur * 0.75;
     const fb = ctx.createGain();
-    fb.gain.value = 0.28;
+    fb.gain.value = 0.2;
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 2200;
     this.echoSend = ctx.createGain();
-    this.echoSend.gain.value = 0.35;
-    this.echoSend.connect(delay).connect(fb).connect(delay);
-    delay.connect(this.musicBus);
+    this.echoSend.gain.value = 0.22;
+    this.echoSend.connect(delay).connect(tone).connect(fb).connect(delay);
+    tone.connect(this.musicBus);
 
     const len = ctx.sampleRate;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -108,16 +116,38 @@ export class Music {
     return this.startTime + Math.max(0, n) * this.beatDur;
   }
 
-  toggleMusic() {
-    this.musicOn = !this.musicOn;
-    if (this.ctx) {
-      this.musicBus.gain.setTargetAtTime(this.musicOn ? 0.55 : 0, this.ctx.currentTime, 0.05);
-    }
-    return this.musicOn;
+  /**
+   * 카운트다운 첫 박 시각. 음악이 나오면 다음 정박을 기다리고,
+   * 꺼져 있으면 박자 격자를 지금으로 옮겨서 바로 시작 (기다림 없음).
+   */
+  countdownStart() {
+    const soon = this.now + 0.1;
+    if (!this.ctx || this.musicOn) return this.nextBeatAfter(this.now + 0.08);
+    this.startTime = soon;
+    this.nextStepTime = soon;
+    this.step = 0;
+    this.beatQueue.length = 0;
+    return soon;
+  }
+
+  setMusic(on) {
+    this.musicOn = on;
+    if (!this.ctx) return;
+    if (on) this.restart = true; // 다음 정박부터 곡 처음으로
+    this.musicBus.gain.setTargetAtTime(on ? MUSIC_VOL : 0, this.ctx.currentTime, 0.08);
+  }
+
+  setSfx(on) {
+    this.sfxOn = on;
+    if (this.ctx) this.sfxBus.gain.setTargetAtTime(on ? SFX_VOL : 0, this.ctx.currentTime, 0.03);
   }
 
   schedule() {
     while (this.nextStepTime < this.ctx.currentTime + 0.12) {
+      if (this.restart && this.step % 2 === 0) {
+        this.step = 0;
+        this.restart = false;
+      }
       this.playStep(this.step, this.nextStepTime);
       this.step = (this.step + 1) % LOOP_STEPS;
       this.nextStepTime += this.stepDur;
@@ -129,15 +159,17 @@ export class Music {
     const chord = CHORDS[Math.floor(step / STEPS_PER_BAR)];
     const beatInBar = inBar / 2;
 
+    if (inBar % 2 === 0) this.beatQueue.push({ time: t, beat: this.beatCount++ });
+    if (!this.musicOn) return; // 꺼져 있으면 소리 노드를 만들지 않음
+
     if (inBar % 2 === 0) {
-      this.beatQueue.push({ time: t, beat: beatInBar, bar: Math.floor(step / STEPS_PER_BAR) });
       if (beatInBar % 2 === 0) {
-        // 뽕!
-        this.kick(t, this.musicBus);
+        // 쿵!
+        this.kick(t, this.musicBus, 0.8);
         this.bass(midiToHz(chord.bass[0]), t);
       } else {
         // 짝!
-        this.snare(t, this.musicBus, 0.5);
+        this.snare(t, this.musicBus, 0.32);
         this.bass(midiToHz(chord.bass[1]), t);
         this.stab(chord.stab, t);
       }
@@ -146,7 +178,7 @@ export class Music {
     }
 
     const mel = MELODY.get(step);
-    if (mel) this.lead(midiToHz(mel[0]), t, mel[1] * this.stepDur * 0.95);
+    if (mel) this.lead(midiToHz(mel[0]), t, mel[1] * this.stepDur * 0.92);
   }
 
   // ---------- 악기 ----------
@@ -156,120 +188,105 @@ export class Music {
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
   }
 
-  kick(t, out, vol = 1) {
-    const { ctx } = this;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.frequency.setValueAtTime(160, t);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.14);
-    this.env(g, t, vol, 0.003, 0.3);
-    o.connect(g).connect(out);
+  osc(type, freq, t, dur, out) {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    o.connect(out);
     o.start(t);
-    o.stop(t + 0.4);
+    o.stop(t + dur);
+    return o;
   }
 
-  snare(t, out, vol = 0.5) {
-    const { ctx } = this;
-    const n = ctx.createBufferSource();
-    n.buffer = this.noise;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 1400;
-    const g = ctx.createGain();
-    this.env(g, t, vol, 0.002, 0.16);
-    n.connect(hp).connect(g).connect(out);
-    n.start(t);
-    n.stop(t + 0.25);
+  kick(t, out, vol = 1) {
+    const g = this.ctx.createGain();
+    this.env(g, t, vol, 0.003, 0.22);
+    g.connect(out);
+    const o = this.osc('sine', 140, t, 0.3, g);
+    o.frequency.exponentialRampToValueAtTime(48, t + 0.12);
+  }
 
-    const o = ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(240, t);
-    o.frequency.exponentialRampToValueAtTime(160, t + 0.08);
-    const g2 = ctx.createGain();
-    this.env(g2, t, vol * 0.6, 0.002, 0.08);
-    o.connect(g2).connect(out);
-    o.start(t);
-    o.stop(t + 0.15);
+  noiseHit(t, out, vol, type, freq, decay) {
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noise;
+    const f = this.ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    const g = this.ctx.createGain();
+    this.env(g, t, vol, 0.002, decay);
+    n.connect(f).connect(g).connect(out);
+    n.start(t, Math.random() * 0.5);
+    n.stop(t + decay + 0.05);
+  }
+
+  snare(t, out, vol = 0.4) {
+    this.noiseHit(t, out, vol, 'highpass', 1600, 0.14);
+    const g = this.ctx.createGain();
+    this.env(g, t, vol * 0.5, 0.002, 0.07);
+    g.connect(out);
+    const o = this.osc('triangle', 230, t, 0.12, g);
+    o.frequency.exponentialRampToValueAtTime(170, t + 0.07);
   }
 
   hat(t) {
-    const { ctx } = this;
-    const n = ctx.createBufferSource();
-    n.buffer = this.noise;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 7500;
-    const g = ctx.createGain();
-    this.env(g, t, 0.14, 0.001, 0.04);
-    n.connect(hp).connect(g).connect(this.musicBus);
-    n.start(t);
-    n.stop(t + 0.08);
+    this.noiseHit(t, this.musicBus, 0.07, 'highpass', 8000, 0.035);
   }
 
   bass(freq, t) {
-    const { ctx } = this;
-    const o = ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.value = freq;
-    const lp = ctx.createBiquadFilter();
+    const lp = this.ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 600;
-    const g = ctx.createGain();
-    this.env(g, t, 0.32, 0.005, this.beatDur * 0.7);
-    o.connect(lp).connect(g).connect(this.musicBus);
-    o.start(t);
-    o.stop(t + this.beatDur);
+    lp.frequency.value = 480;
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.26, 0.006, this.beatDur * 0.6);
+    lp.connect(g).connect(this.musicBus);
+    this.osc('square', freq, t, this.beatDur, lp);
   }
 
   stab(notes, t) {
-    const { ctx } = this;
-    const lp = ctx.createBiquadFilter();
+    const lp = this.ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 2200;
-    const g = ctx.createGain();
-    this.env(g, t, 0.09, 0.004, 0.14);
+    lp.frequency.value = 1800;
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.055, 0.004, 0.12);
     lp.connect(g).connect(this.musicBus);
-    for (const m of notes) {
-      const o = ctx.createOscillator();
-      o.type = 'square';
-      o.frequency.value = midiToHz(m);
-      o.connect(lp);
-      o.start(t);
-      o.stop(t + 0.2);
-    }
+    for (const m of notes) this.osc('square', midiToHz(m), t, 0.18, lp);
   }
 
-  // 꺾기 + 바이브레이션 들어간 전자 올갠 리드
+  // 전자 올겐 리드: 살짝 아래서 올라오는 꺾기 + 뒤늦게 들어오는 바이브레이션
   lead(freq, t, dur) {
     const { ctx } = this;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.11, t + 0.02);
-    g.gain.setValueAtTime(0.11, t + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.09, t + 0.02);
+    g.gain.setValueAtTime(0.09, t + dur * 0.75);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 2600;
-    lp.Q.value = 3;
+    lp.frequency.value = 1900;
+    lp.Q.value = 1.2;
 
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 6;
+    lfo.frequency.value = 5.6;
     const depth = ctx.createGain();
     depth.gain.setValueAtTime(0, t);
-    depth.gain.linearRampToValueAtTime(0, t + Math.min(0.12, dur * 0.4));
-    depth.gain.linearRampToValueAtTime(dur > 0.3 ? 45 : 15, t + dur);
+    depth.gain.linearRampToValueAtTime(0, t + Math.min(0.14, dur * 0.4));
+    depth.gain.linearRampToValueAtTime(dur > 0.3 ? 26 : 8, t + dur);
     lfo.connect(depth);
 
-    for (const det of [-9, 9]) {
+    for (const [type, det, vol] of [
+      ['sawtooth', 0, 0.7],
+      ['square', -8, 0.35],
+    ]) {
+      const v = ctx.createGain();
+      v.gain.value = vol;
       const o = ctx.createOscillator();
-      o.type = 'sawtooth';
+      o.type = type;
       o.frequency.value = freq;
-      // 살짝 아래에서 올라오는 꺾기
-      o.detune.setValueAtTime(det - 70, t);
-      o.detune.linearRampToValueAtTime(det, t + 0.06);
+      o.detune.setValueAtTime(det - 50, t);
+      o.detune.linearRampToValueAtTime(det, t + 0.05);
       depth.connect(o.detune);
-      o.connect(lp);
+      o.connect(v).connect(lp);
       o.start(t);
       o.stop(t + dur + 0.05);
     }
@@ -280,99 +297,130 @@ export class Music {
     g.connect(this.echoSend);
   }
 
-  // ---------- 효과음 ----------
+  // ---------- 효과음 (동글동글하게) ----------
+  /** 가위! 바위! 할 때 뿅 */
   blip(t, pitch = 1) {
     if (!this.ctx) return;
-    const { ctx } = this;
-    const o = ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.setValueAtTime(600 * pitch, t);
-    o.frequency.exponentialRampToValueAtTime(1300 * pitch, t + 0.08);
-    const g = ctx.createGain();
-    this.env(g, t, 0.18, 0.003, 0.14);
-    o.connect(g).connect(this.sfxBus);
-    o.start(t);
-    o.stop(t + 0.2);
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.22, 0.004, 0.12);
+    g.connect(this.sfxBus);
+    const o = this.osc('sine', 480 * pitch, t, 0.16, g);
+    o.frequency.exponentialRampToValueAtTime(980 * pitch, t + 0.07);
+    const g2 = this.ctx.createGain();
+    this.env(g2, t, 0.05, 0.004, 0.08);
+    g2.connect(this.sfxBus);
+    const o2 = this.osc('triangle', 960 * pitch, t, 0.12, g2);
+    o2.frequency.exponentialRampToValueAtTime(1960 * pitch, t + 0.07);
   }
 
+  /** 보! 에서 짠! */
   reveal(t) {
     if (!this.ctx) return;
-    this.kick(t, this.sfxBus, 1);
-    this.snare(t, this.sfxBus, 0.8);
+    this.kick(t, this.sfxBus, 0.5);
+    this.noiseHit(t, this.sfxBus, 0.12, 'highpass', 5000, 0.25);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 3200;
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.1, 0.004, 0.3);
+    lp.connect(g).connect(this.sfxBus);
+    for (const m of [72, 76, 79]) {
+      this.osc('triangle', midiToHz(m), t, 0.4, lp);
+      this.osc('square', midiToHz(m + 12), t, 0.4, lp).detune.value = 6;
+    }
   }
 
   hover() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(900, t);
-    o.frequency.exponentialRampToValueAtTime(1400, t + 0.05);
     const g = this.ctx.createGain();
-    this.env(g, t, 0.06, 0.002, 0.06);
-    o.connect(g).connect(this.sfxBus);
-    o.start(t);
-    o.stop(t + 0.1);
+    this.env(g, t, 0.035, 0.002, 0.04);
+    g.connect(this.sfxBus);
+    this.osc('triangle', 1400, t, 0.06, g);
   }
 
+  /** 님이 이겼을 때: 빰빠밤~ 빰! */
   fanfare(t) {
     if (!this.ctx) return;
-    [72, 76, 79, 84, 88].forEach((m, i) => {
-      const o = this.ctx.createOscillator();
-      o.type = 'square';
-      o.frequency.value = midiToHz(m);
+    const notes = [
+      [72, 0, 0.1],
+      [76, 0.1, 0.1],
+      [79, 0.2, 0.1],
+      [84, 0.32, 0.55],
+    ];
+    for (const [m, at, dur] of notes) {
+      const st = t + at;
       const g = this.ctx.createGain();
-      const st = t + i * 0.07;
-      this.env(g, st, 0.1, 0.005, i === 4 ? 0.6 : 0.12);
-      o.connect(g).connect(this.sfxBus);
-      o.start(st);
-      o.stop(st + 0.8);
-    });
+      this.env(g, st, 0.09, 0.008, dur);
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 2800;
+      lp.connect(g).connect(this.sfxBus);
+      this.osc('triangle', midiToHz(m), st, dur + 0.1, lp);
+      const sq = this.osc('square', midiToHz(m), st, dur + 0.1, lp);
+      if (dur > 0.3) {
+        const lfo = this.ctx.createOscillator();
+        lfo.frequency.value = 6;
+        const d = this.ctx.createGain();
+        d.gain.value = 18;
+        lfo.connect(d).connect(sq.detune);
+        lfo.start(st);
+        lfo.stop(st + dur + 0.1);
+      }
+    }
   }
 
+  /** 님이 졌을 때: 뿌-뿌-뿌-뿌와~앙 (트롬본) */
   sad(t) {
     if (!this.ctx) return;
-    // 뿌잉~ 하고 떨어지는 소리
-    const o = this.ctx.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(520, t);
-    o.frequency.exponentialRampToValueAtTime(140, t + 0.8);
+    const notes = [
+      [55, 0, 0.26],
+      [54, 0.3, 0.26],
+      [53, 0.6, 0.26],
+      [52, 0.9, 0.85],
+    ];
+    for (const [m, at, dur] of notes) {
+      const st = t + at;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(0.13, st + 0.04);
+      g.gain.setValueAtTime(0.13, st + dur * 0.7);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(500, st);
+      lp.frequency.linearRampToValueAtTime(1100, st + 0.08);
+      lp.Q.value = 2;
+      lp.connect(g).connect(this.sfxBus);
+      const o = this.osc('sawtooth', midiToHz(m), st, dur + 0.05, lp);
+      if (dur > 0.5) {
+        const lfo = this.ctx.createOscillator();
+        lfo.frequency.value = 7;
+        const d = this.ctx.createGain();
+        d.gain.setValueAtTime(0, st);
+        d.gain.linearRampToValueAtTime(45, st + 0.4);
+        lfo.connect(d).connect(o.detune);
+        lfo.start(st);
+        lfo.stop(st + dur);
+      }
+    }
+  }
+
+  /** 비겼을 때: 띠용~ */
+  boing(t) {
+    if (!this.ctx) return;
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.2, 0.01, 0.5);
+    g.connect(this.sfxBus);
+    const o = this.osc('sine', 200, t, 0.6, g);
+    o.frequency.exponentialRampToValueAtTime(620, t + 0.1);
+    o.frequency.exponentialRampToValueAtTime(280, t + 0.5);
     const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 9;
+    lfo.frequency.value = 13;
     const lg = this.ctx.createGain();
     lg.gain.value = 30;
     lfo.connect(lg).connect(o.frequency);
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 1500;
-    const g = this.ctx.createGain();
-    this.env(g, t, 0.14, 0.01, 0.85);
-    o.connect(lp).connect(g).connect(this.sfxBus);
-    o.start(t);
     lfo.start(t);
-    o.stop(t + 0.9);
-    lfo.stop(t + 0.9);
-  }
-
-  boing(t) {
-    if (!this.ctx) return;
-    // 띠용~
-    const o = this.ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(180, t);
-    o.frequency.exponentialRampToValueAtTime(700, t + 0.12);
-    o.frequency.exponentialRampToValueAtTime(260, t + 0.5);
-    const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 14;
-    const lg = this.ctx.createGain();
-    lg.gain.value = 40;
-    lfo.connect(lg).connect(o.frequency);
-    const g = this.ctx.createGain();
-    this.env(g, t, 0.25, 0.01, 0.55);
-    o.connect(g).connect(this.sfxBus);
-    o.start(t);
-    lfo.start(t);
-    o.stop(t + 0.6);
     lfo.stop(t + 0.6);
   }
 }

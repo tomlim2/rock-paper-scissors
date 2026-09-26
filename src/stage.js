@@ -1,20 +1,57 @@
 import * as THREE from 'three';
-import { toon } from './toon.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { toon, raw, glowTexture } from './toon.js';
 
-const NEON = [0xff3e7f, 0xffe45e, 0x3ef2ff, 0xb45cff, 0x5cff8a, 0xff9b3e];
+export const NEON = [0xff3e7f, 0xffe45e, 0x3ef2ff, 0xb45cff, 0x5cff8a, 0xff9b3e];
+
+export const MOODS = {
+  party: [0xff6aa8, 0xc42a7c],
+  win: [0x5fd0ff, 0x2a6fd6],
+  lose: [0xffb347, 0xdb5a36],
+  draw: [0xc9a4ff, 0x8a4fe0],
+};
+
+const STAGE_R = 14;
+const STAGE_CZ = -12;
+const FLOOR_Y = -1.29;
+const HALL_Y = -2.4;
+
+const hash = (n) => {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
 
 // 트로트 가요무대 스타일 무대
 export class Stage {
   constructor(scene) {
     this.scene = scene;
-    this.beatFlash = 0;
+    this.flash = 0;
+    this.beat = 0;
+    this.moodA = raw(MOODS.party[0]);
+    this.moodB = raw(MOODS.party[1]);
+    this.moodTargetA = this.moodA.clone();
+    this.moodTargetB = this.moodB.clone();
 
-    // 빙글빙글 햇살 배경
-    this.sunburst = new THREE.ShaderMaterial({
+    this.buildBackdrop();
+    this.buildMarquee();
+    this.buildStage();
+    this.buildCurtains();
+    this.buildDisco();
+    this.buildBeams();
+    this.buildCrowd();
+    this.confetti = new Confetti(scene);
+    this.floaters = new Floaters(scene);
+    this.pows = new Pows(scene);
+  }
+
+  // ---------- 빙글빙글 햇살 배경 ----------
+  buildBackdrop() {
+    this.backMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uFlash: { value: 0 },
-        uMood: { value: new THREE.Color(0xff3e7f) },
+        uA: { value: this.moodA },
+        uB: { value: this.moodB },
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
@@ -24,187 +61,479 @@ export class Stage {
         varying vec2 vUv;
         uniform float uTime;
         uniform float uFlash;
-        uniform vec3 uMood;
+        uniform vec3 uA;
+        uniform vec3 uB;
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         void main() {
-          vec2 p = (vUv - vec2(0.5, 0.52)) * vec2(1.7, 1.0);
-          float a = atan(p.y, p.x) / 6.28318 + 0.5;
+          vec2 p = (vUv - vec2(0.5, 0.46)) * vec2(1.69, 1.0);
+          float a = atan(p.y, p.x);
           float r = length(p);
-          float rays = step(0.5, fract(a * 18.0 + uTime * 0.04));
-          vec3 c1 = uMood;
-          vec3 c2 = mix(vec3(1.0, 0.85, 0.35), uMood, 0.25);
-          vec3 col = mix(c1, c2, rays);
-          col = mix(col, vec3(1.0, 0.95, 0.8), smoothstep(0.22, 0.0, r) * 0.9);
-          col = mix(col, vec3(0.2, 0.05, 0.3), smoothstep(0.25, 0.75, r));
-          col += uFlash * 0.18;
-          // 반짝이 도트
-          vec2 g = fract(vUv * vec2(60.0, 36.0)) - 0.5;
-          float dotm = smoothstep(0.18, 0.1, length(g));
-          col += dotm * 0.06 * rays;
+          float s = sin(a * 16.0 + uTime * 0.3);
+          float rays = smoothstep(-0.04, 0.04, s);
+          vec3 col = mix(uB, uA, rays);
+          col = mix(col, vec3(1.0, 0.88, 0.66), smoothstep(0.18, 0.0, r) * 0.38);
+          col = mix(col, vec3(0.17, 0.05, 0.23), smoothstep(0.2, 0.62, r) * 0.85);
+          // 미러볼 반사광 점점이
+          vec2 g = vUv * vec2(46.0, 27.0) + vec2(uTime * 0.5, sin(uTime * 0.23) * 1.5);
+          vec2 id = floor(g);
+          vec2 f = fract(g) - 0.5;
+          float h = hash(id);
+          vec2 off = (vec2(hash(id + 1.7), hash(id + 3.1)) - 0.5) * 0.5;
+          float dotm = smoothstep(0.13, 0.03, length(f - off)) * step(0.84, h);
+          col += dotm * (0.28 + 0.28 * sin(uTime * 4.0 + h * 40.0));
+          col += uFlash * 0.06;
           gl_FragColor = vec4(col, 1.0);
         }
       `,
     });
-    const back = new THREE.Mesh(new THREE.PlaneGeometry(44, 26), this.sunburst);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(44, 26), this.backMat);
     back.position.set(0, 3, -7);
-    scene.add(back);
+    this.scene.add(back);
+  }
 
-    // 전구 링
-    this.bulbs = [];
-    const bulbGeo = new THREE.SphereGeometry(0.12, 12, 10);
-    const N = 36;
+  // ---------- 금테 전구 링 ----------
+  buildMarquee() {
+    const center = new THREE.Vector3(0.4, 2.05, -6.6);
+    const rx = 3.2;
+    const ry = 2.55;
+    const pts = new THREE.EllipseCurve(0, 0, rx, ry).getPoints(128).map((p) => new THREE.Vector3(p.x, p.y, 0));
+    pts.pop();
+    const frame = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 256, 0.07, 8, true),
+      toon(0xffc53d, { emissive: 0x4a2a00 }),
+    );
+    frame.position.copy(center);
+    this.scene.add(frame);
+
+    const N = 34;
+    this.bulbCount = N;
+    const bulbGeo = new THREE.SphereGeometry(0.1, 12, 10);
+    this.bulbs = new THREE.InstancedMesh(bulbGeo, new THREE.MeshBasicMaterial(), N);
+    const glowPos = new Float32Array(N * 3);
+    const m = new THREE.Matrix4();
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2;
-      const m = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      m.position.set(Math.cos(a) * 3.3, 2.1 + Math.sin(a) * 2.6, -6.5);
-      scene.add(m);
-      this.bulbs.push(m);
+      const x = center.x + Math.cos(a) * rx;
+      const y = center.y + Math.sin(a) * ry;
+      m.makeTranslation(x, y, center.z + 0.1);
+      this.bulbs.setMatrixAt(i, m);
+      glowPos.set([x, y, center.z + 0.16], i * 3);
     }
+    this.scene.add(this.bulbs);
+    this.bulbGlow = glowPoints(glowPos, 0.8);
+    this.scene.add(this.bulbGlow);
+  }
 
-    // 디스코 바닥
-    this.tiles = [];
-    const tileGeo = new THREE.BoxGeometry(0.96, 0.12, 0.96);
-    for (let x = -6; x < 6; x++) {
-      for (let z = -6; z < 4; z++) {
-        const mat = new THREE.MeshStandardMaterial({ color: 0x2b1640, emissive: 0x000000, roughness: 0.35, metalness: 0.2 });
-        const t = new THREE.Mesh(tileGeo, mat);
-        t.position.set(x + 0.5, -1.35, z + 0.5);
-        scene.add(t);
-        this.tiles.push({ mesh: t, heat: 0, color: new THREE.Color(NEON[0]) });
-      }
-    }
+  // ---------- 디스코 타일 무대 ----------
+  buildStage() {
+    this.floorMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uBeat: { value: 0 },
+        uFlash: { value: 0 },
+        uShadow: { value: new THREE.Vector2(0.8, -0.2) },
+        uSpot: { value: new THREE.Vector2(0.4, 0.2) },
+        uBeamPos: { value: [new THREE.Vector2(), new THREE.Vector2()] },
+        uBeamCol: { value: [raw(NEON[0]), raw(NEON[2])] },
+        uPal: { value: NEON.map(raw) },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vWorld;
+        void main() {
+          vec4 w = modelMatrix * vec4(position, 1.0);
+          vWorld = w.xyz;
+          gl_Position = projectionMatrix * viewMatrix * w;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        varying vec3 vWorld;
+        uniform float uBeat;
+        uniform float uFlash;
+        uniform vec2 uShadow;
+        uniform vec2 uSpot;
+        uniform vec2 uBeamPos[2];
+        uniform vec3 uBeamCol[2];
+        uniform vec3 uPal[6];
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        void main() {
+          vec2 w = vWorld.xz;
+          vec2 q = w / 1.1;
+          vec2 cell = floor(q);
+          vec2 f = fract(q);
+          float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+          float grout = smoothstep(0.015, 0.05, edge);
+          float checker = mod(cell.x + cell.y, 2.0);
+          vec3 col = mix(vec3(0.11, 0.05, 0.18), vec3(0.17, 0.08, 0.26), checker);
+          float b = floor(uBeat);
+          float lit = step(0.62, hash(cell + b * vec2(1.7, 9.2)));
+          int idx = int(floor(hash(cell * 1.31 + b * 0.77) * 5.999));
+          col += uPal[idx] * lit * (0.22 + 0.5 * uFlash);
+          col += 0.05 * (1.0 - smoothstep(0.0, 0.3, f.y));
+          col *= mix(0.3, 1.0, grout);
+          float d = length((w - uSpot) * vec2(1.0, 1.35));
+          col += vec3(1.0, 0.82, 0.66) * smoothstep(2.8, 0.2, d) * 0.2;
+          for (int i = 0; i < 2; i++) {
+            col += uBeamCol[i] * smoothstep(1.5, 0.0, length(w - uBeamPos[i])) * 0.3;
+          }
+          float sd = length((w - uShadow) * vec2(1.0, 1.6));
+          col *= 1.0 - 0.6 * smoothstep(1.3, 0.25, sd);
+          col *= mix(0.4, 1.0, smoothstep(-7.0, -1.5, vWorld.z));
+          col *= mix(0.5, 1.0, smoothstep(9.5, 4.5, abs(vWorld.x)));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    const apron = toon(0x9e1742);
+    const stage = new THREE.Mesh(new THREE.CylinderGeometry(STAGE_R, STAGE_R, 1.1, 180), [apron, this.floorMat, apron]);
+    stage.position.set(0, FLOOR_Y - 0.55, STAGE_CZ);
+    this.scene.add(stage);
 
-    // 빨간 벨벳 커튼
-    const curtainGeo = new THREE.PlaneGeometry(5, 14, 60, 1);
-    const pos = curtainGeo.attributes.position;
+    const trim = new THREE.Mesh(
+      new THREE.CylinderGeometry(STAGE_R + 0.03, STAGE_R + 0.03, 0.16, 180, 1, true),
+      toon(0xffc53d, { emissive: 0x4a2a00 }),
+    );
+    trim.position.set(0, FLOOR_Y - 0.09, STAGE_CZ);
+    this.scene.add(trim);
+
+    // 앞 무대 조명
+    const xs = [];
+    for (let x = -9; x <= 9.01; x += 0.9) xs.push(x);
+    this.footCount = xs.length;
+    const glowPos = new Float32Array(xs.length * 3);
+    this.foots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.08, 10, 8), new THREE.MeshBasicMaterial(), xs.length);
+    const m = new THREE.Matrix4();
+    xs.forEach((x, i) => {
+      const z = STAGE_CZ + Math.sqrt(STAGE_R * STAGE_R - x * x) + 0.05;
+      m.makeTranslation(x, FLOOR_Y - 0.3, z);
+      this.foots.setMatrixAt(i, m);
+      glowPos.set([x, FLOOR_Y - 0.3, z + 0.05], i * 3);
+    });
+    this.scene.add(this.foots);
+    this.footGlow = glowPoints(glowPos, 0.6);
+    this.scene.add(this.footGlow);
+
+    const hall = new THREE.Mesh(new THREE.PlaneGeometry(80, 40), new THREE.MeshBasicMaterial({ color: 0x12061a }));
+    hall.rotation.x = -Math.PI / 2;
+    hall.position.set(0, HALL_Y, 16);
+    this.scene.add(hall);
+  }
+
+  // ---------- 빨간 벨벳 커튼 ----------
+  buildCurtains() {
+    const mat = toon(0xc81d4e, { side: THREE.DoubleSide });
+    const geo = new THREE.PlaneGeometry(5, 14, 60, 12);
+    const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
-      pos.setZ(i, Math.sin(x * 5.5) * 0.22);
+      const y = pos.getY(i);
+      // 아래쪽은 묶어서 바깥으로 모음
+      const t = THREE.MathUtils.smoothstep(-y, 1, 7);
+      pos.setX(i, x * (1 - t * 0.45) + t * 1.1);
+      pos.setZ(i, Math.sin(x * 5.2) * 0.22 * (1 - t * 0.5));
     }
-    curtainGeo.computeVertexNormals();
-    const curtainMat = toon(0xc81d4e, { side: THREE.DoubleSide });
+    geo.computeVertexNormals();
     for (const sx of [-1, 1]) {
-      const c = new THREE.Mesh(curtainGeo, curtainMat);
-      c.position.set(sx * 9.2, 4, -4);
+      const c = new THREE.Mesh(geo, mat);
+      c.scale.x = sx;
+      c.position.set(sx * 9.4, 4.2, -4.2);
       c.rotation.y = -sx * 0.35;
-      scene.add(c);
-      const tie = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.12, 8, 20), toon(0xffd23f));
-      tie.position.set(sx * 8.2, 0.6, -3.4);
-      tie.rotation.y = Math.PI / 2;
-      scene.add(tie);
+      this.scene.add(c);
     }
-    const valanceGeo = new THREE.PlaneGeometry(26, 2.2, 120, 1);
-    const vp = valanceGeo.attributes.position;
+
+    const vGeo = new THREE.PlaneGeometry(28, 2.2, 160, 1);
+    const vp = vGeo.attributes.position;
+    const fringe = [];
     for (let i = 0; i < vp.count; i++) {
       const x = vp.getX(i);
       const y = vp.getY(i);
-      vp.setZ(i, Math.sin(x * 4) * 0.2);
-      if (y < 0) vp.setY(i, y - Math.abs(Math.sin(x * 1.2)) * 0.5);
+      vp.setZ(i, Math.sin(x * 4) * 0.18);
+      if (y < 0) {
+        const ny = y - Math.abs(Math.sin(x * 1.15)) * 0.55;
+        vp.setY(i, ny);
+        fringe.push(new THREE.Vector3(x, ny, Math.sin(x * 4) * 0.18 + 0.05));
+      }
     }
-    valanceGeo.computeVertexNormals();
-    const valance = new THREE.Mesh(valanceGeo, curtainMat);
-    valance.position.set(0, 8.2, -3.5);
-    scene.add(valance);
-
-    // 미러볼
-    this.disco = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.7, 2),
-      new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 1, roughness: 0.1, flatShading: true, emissive: 0x333344 }),
+    vGeo.computeVertexNormals();
+    const valance = new THREE.Mesh(vGeo, mat);
+    valance.position.set(0, 6.9, -3.6);
+    this.scene.add(valance);
+    fringe.sort((a, b) => a.x - b.x);
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(fringe), 300, 0.07, 6),
+      toon(0xffc53d, { emissive: 0x4a2a00 }),
     );
-    this.disco.position.set(0, 6.4, -1.5);
-    scene.add(this.disco);
-    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 3), new THREE.MeshBasicMaterial({ color: 0x999999 }));
-    string.position.set(0, 8.2, -1.5);
-    scene.add(string);
-
-    // 무대 조명
-    this.spots = NEON.slice(0, 3).map((c, i) => {
-      const s = new THREE.SpotLight(c, 40, 20, 0.35, 0.6, 1.2);
-      s.position.set((i - 1) * 5, 8, 3);
-      s.target.position.set(0, 0, 0);
-      scene.add(s, s.target);
-      return s;
-    });
-
-    // 반짝이 별
-    const starCount = 160;
-    const sg = new THREE.BufferGeometry();
-    const sp = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-      sp[i * 3] = (Math.random() - 0.5) * 22;
-      sp[i * 3 + 1] = Math.random() * 10 - 0.5;
-      sp[i * 3 + 2] = -6 + Math.random() * 3;
-    }
-    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
-    this.stars = new THREE.Points(
-      sg,
-      new THREE.PointsMaterial({ color: 0xffffff, size: 0.12, transparent: true, opacity: 0.8, map: sparkleTexture(), depthWrite: false, blending: THREE.AdditiveBlending }),
-    );
-    scene.add(this.stars);
-
-    this.confetti = new Confetti(scene);
+    tube.position.copy(valance.position);
+    this.scene.add(tube);
   }
 
-  setMood(color) {
-    this.sunburst.uniforms.uMood.value.set(color);
+  // ---------- 미러볼 ----------
+  buildDisco() {
+    this.disco = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.62, 2),
+      new THREE.MeshStandardMaterial({ color: 0xe8e8f0, metalness: 1, roughness: 0.12, flatShading: true }),
+    );
+    this.scene.add(this.disco);
+    this.string = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.015, 0.015, 6),
+      new THREE.MeshBasicMaterial({ color: 0xbbbbcc }),
+    );
+    this.scene.add(this.string);
+    this.setLayout(false);
+    const glints = new Float32Array(6 * 3);
+    this.glints = glowPoints(glints, 0.5);
+    this.scene.add(this.glints);
+  }
+
+  // ---------- 무대 조명 빛줄기 ----------
+  buildBeams() {
+    const H = 13;
+    const geo = new THREE.ConeGeometry(1.8, H, 32, 1, true);
+    geo.translate(0, -H / 2, 0);
+    this.beams = [-1, 1].map((sx, i) => {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uColor: { value: raw(NEON[i * 2]) }, uH: { value: H }, uOpacity: { value: 0.38 } },
+        vertexShader: /* glsl */ `
+          uniform float uH;
+          varying vec3 vN;
+          varying vec3 vV;
+          varying float vT;
+          void main() {
+            vT = -position.y / uH;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vN = normalize(normalMatrix * normal);
+            vV = normalize(-mv.xyz);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          varying vec3 vN;
+          varying vec3 vV;
+          varying float vT;
+          void main() {
+            float along = smoothstep(0.0, 0.2, vT) * (1.0 - smoothstep(0.5, 1.0, vT));
+            float soft = pow(abs(dot(normalize(vN), normalize(vV))), 2.0);
+            gl_FragColor = vec4(uColor * along * soft * uOpacity, 1.0);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      const beam = new THREE.Mesh(geo, mat);
+      beam.position.set(sx * 7, 9.5, 1.5);
+      beam.userData = { sx, target: new THREE.Vector3() };
+      this.scene.add(beam);
+      return beam;
+    });
+  }
+
+  // ---------- 관객석 + 응원봉 ----------
+  buildCrowd() {
+    const head = new THREE.SphereGeometry(0.3, 12, 10);
+    head.translate(0, 1.55, 0);
+    const torso = new THREE.CapsuleGeometry(0.4, 0.7, 4, 10);
+    torso.scale(1, 1, 0.7);
+    torso.translate(0, 0.72, 0);
+    const person = mergeGeometries([head, torso]);
+    const people = [];
+    let seed = 1;
+    for (let z = 3.1; z < 14; z += 0.95) {
+      const row = Math.round((z - 3.1) / 0.95);
+      for (let x = -11; x <= 11; x += 0.95) {
+        const jx = (hash(seed++) - 0.5) * 0.35;
+        const px = x + jx + (row % 2) * 0.47;
+        people.push({
+          x: px,
+          z: z + (hash(seed++) - 0.5) * 0.3,
+          s: 0.9 + hash(seed++) * 0.2,
+          jump: hash(seed++) < 0.55,
+          stick: hash(seed++) < 0.45,
+          off: hash(seed++) * Math.PI * 2,
+          color: NEON[Math.floor(hash(seed++) * NEON.length)],
+        });
+      }
+    }
+    this.people = people;
+    this.crowd = new THREE.InstancedMesh(person, new THREE.MeshBasicMaterial({ color: 0xffffff }), people.length);
+    const c = new THREE.Color();
+    // 무대 가까운 줄은 조명을 받아 조금 밝게, 뒤로 갈수록 어둡게
+    const front = new THREE.Color(0x3b1a52);
+    const back = new THREE.Color(0x13061c);
+    people.forEach((p, i) => {
+      c.lerpColors(front, back, THREE.MathUtils.clamp((p.z - 3) / 7, 0, 1)).multiplyScalar(0.85 + hash(i * 3.3) * 0.3);
+      this.crowd.setColorAt(i, c);
+    });
+    this.scene.add(this.crowd);
+
+    const sticks = people.filter((p) => p.stick);
+    this.sticks = sticks;
+    this.stickMesh = new THREE.InstancedMesh(
+      new THREE.CapsuleGeometry(0.05, 0.5, 4, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }),
+      sticks.length,
+    );
+    sticks.forEach((p, i) => this.stickMesh.setColorAt(i, c.setHex(p.color)));
+    this.scene.add(this.stickMesh);
+    const colors = new Float32Array(sticks.length * 3);
+    sticks.forEach((p, i) => {
+      c.setHex(p.color);
+      colors.set([c.r, c.g, c.b], i * 3);
+    });
+    this.stickGlow = glowPoints(new Float32Array(sticks.length * 3), 1.3, colors);
+    this.scene.add(this.stickGlow);
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._e = new THREE.Euler();
+    this._v = new THREE.Vector3();
+    this._s = new THREE.Vector3();
+  }
+
+  setLayout(portrait) {
+    this.disco.position.set(portrait ? 2.4 : -3.9, portrait ? 4.0 : 4.3, -3);
+    this.string.position.set(this.disco.position.x, this.disco.position.y + 3.3, -3);
+  }
+
+  setMood(name) {
+    const [a, b] = MOODS[name] || MOODS.party;
+    this.moodTargetA.setHex(a, THREE.LinearSRGBColorSpace);
+    this.moodTargetB.setHex(b, THREE.LinearSRGBColorSpace);
   }
 
   onBeat(beat) {
-    this.beatFlash = 1;
-    for (const t of this.tiles) {
-      if (Math.random() < 0.45) {
-        t.heat = 1;
-        t.color.setHex(NEON[(Math.random() * NEON.length) | 0]);
-      }
-    }
-    this.spots.forEach((s, i) => s.color.setHex(NEON[(beat + i * 2) % NEON.length]));
+    this.beat = beat;
+    this.flash = 1;
+    this.floorMat.uniforms.uBeat.value = beat;
+    this.beams.forEach((bm, i) => bm.material.uniforms.uColor.value.setHex(NEON[(beat + i * 3) % NEON.length], THREE.LinearSRGBColorSpace));
+    this.floorMat.uniforms.uBeamCol.value.forEach((col, i) => col.setHex(NEON[(beat + i * 3) % NEON.length], THREE.LinearSRGBColorSpace));
   }
 
-  update(dt, time) {
-    this.beatFlash = Math.max(0, this.beatFlash - dt * 4);
-    this.sunburst.uniforms.uTime.value = time;
-    this.sunburst.uniforms.uFlash.value = this.beatFlash;
+  setShadow(x, z) {
+    this.floorMat.uniforms.uShadow.value.set(x, z);
+    this.floorMat.uniforms.uSpot.value.set(x - 0.3, z + 0.4);
+  }
 
-    for (const t of this.tiles) {
-      t.heat = Math.max(0, t.heat - dt * 2.2);
-      t.mesh.material.emissive.copy(t.color).multiplyScalar(t.heat * 0.9);
+  update(dt, time, phase, beat, calm = false) {
+    this.flash = Math.max(0, this.flash - dt * 3.5);
+    const k = Math.min(1, dt * 3);
+    this.moodA.lerp(this.moodTargetA, k);
+    this.moodB.lerp(this.moodTargetB, k);
+    this.backMat.uniforms.uTime.value = calm ? time * 0.3 : time;
+    this.backMat.uniforms.uFlash.value = this.flash;
+    this.floorMat.uniforms.uFlash.value = this.flash * (calm ? 0.4 : 1);
+
+    // 전구 쫓아가기
+    const chase = Math.floor(time * 9);
+    const c = new THREE.Color();
+    const glow = this.bulbGlow.geometry.attributes.color;
+    for (let i = 0; i < this.bulbCount; i++) {
+      const on = (i + chase) % 4 < 2;
+      c.setHex(on ? 0xfff2a8 : 0x8a5a2a);
+      this.bulbs.setColorAt(i, c);
+      const g = on ? 0.9 : 0.12 + this.flash * 0.3;
+      glow.setXYZ(i, g, g * 0.85, g * 0.55);
     }
-    const chase = Math.floor(time * 8);
-    this.bulbs.forEach((b, i) => {
-      const on = (i + chase) % 3 === 0;
-      b.material.color.setHex(on ? 0xfff6a0 : 0x7a4a2a);
+    this.bulbs.instanceColor.needsUpdate = true;
+    glow.needsUpdate = true;
+
+    const fglow = this.footGlow.geometry.attributes.color;
+    for (let i = 0; i < this.footCount; i++) {
+      const on = (i + (beat % 2)) % 2 === 0;
+      c.setHex(on ? 0xfff6d0 : 0xffb070);
+      this.foots.setColorAt(i, c);
+      const g = on ? 0.7 : 0.25;
+      fglow.setXYZ(i, g, g * 0.9, g * 0.7);
+    }
+    this.foots.instanceColor.needsUpdate = true;
+    fglow.needsUpdate = true;
+
+    // 미러볼 + 반짝
+    this.disco.rotation.y += dt * 0.7;
+    const gp = this.glints.geometry.attributes.position;
+    const gc = this.glints.geometry.attributes.color;
+    for (let i = 0; i < 6; i++) {
+      const a = time * 0.7 + i * 1.9;
+      const y = Math.sin(i * 2.3) * 0.5;
+      gp.setXYZ(i, this.disco.position.x + Math.cos(a) * 0.55, this.disco.position.y + y, this.disco.position.z + Math.abs(Math.sin(a)) * 0.6);
+      const tw = Math.max(0, Math.sin(time * 6 + i * 2.1)) * 0.9;
+      gc.setXYZ(i, tw, tw, tw);
+    }
+    gp.needsUpdate = true;
+    gc.needsUpdate = true;
+
+    // 빛줄기 흔들기
+    this.beams.forEach((bm, i) => {
+      const { sx, target } = bm.userData;
+      target.set(-sx * 0.2 + Math.sin(time * 0.9 + i * 2) * 2.4, FLOOR_Y, Math.cos(time * 0.7 + i) * 1.6);
+      const dir = this._v.copy(target).sub(bm.position).normalize();
+      bm.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+      this.floorMat.uniforms.uBeamPos.value[i].set(target.x, target.z);
     });
 
-    this.disco.rotation.y += dt * 0.8;
-    this.spots.forEach((s, i) => {
-      s.target.position.set(Math.sin(time * 1.3 + i * 2) * 3, 0, Math.cos(time * 0.9 + i) * 1.5);
+    // 관객 들썩들썩
+    const hop = Math.sin(phase * Math.PI);
+    const m = this._m;
+    const s = this._s;
+    const q = this._q;
+    this.people.forEach((p, i) => {
+      const y = HALL_Y + (p.jump ? hop * hop * 0.14 : 0);
+      s.setScalar(p.s);
+      q.identity();
+      m.compose(this._v.set(p.x, y, p.z), q, s);
+      this.crowd.setMatrixAt(i, m);
+      p.y = y;
     });
-    this.stars.material.opacity = 0.5 + Math.sin(time * 6) * 0.3;
+    this.crowd.instanceMatrix.needsUpdate = true;
+
+    const sp = this.stickGlow.geometry.attributes.position;
+    this.sticks.forEach((p, i) => {
+      const ang = Math.sin(((beat + phase) * Math.PI) / 2 + (p.off > 3 ? 0 : Math.PI)) * 0.55;
+      const bx = p.x + 0.3 * p.s;
+      const by = p.y + 1.85 * p.s;
+      this._e.set(0, 0, ang);
+      q.setFromEuler(this._e);
+      // 캡슐 중심 = 손 위치 + 막대 방향 * 0.3
+      const cx = bx - Math.sin(ang) * 0.3;
+      const cy = by + Math.cos(ang) * 0.3;
+      m.compose(this._v.set(cx, cy, p.z), q, s.setScalar(1));
+      this.stickMesh.setMatrixAt(i, m);
+      sp.setXYZ(i, bx - Math.sin(ang) * 0.42, by + Math.cos(ang) * 0.42, p.z + 0.05);
+    });
+    this.stickMesh.instanceMatrix.needsUpdate = true;
+    sp.needsUpdate = true;
+
     this.confetti.update(dt);
+    this.floaters.update(dt, time);
+    this.pows.update(dt);
   }
 }
 
-function sparkleTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grd.addColorStop(0, 'rgba(255,255,255,1)');
-  grd.addColorStop(0.3, 'rgba(255,240,200,0.6)');
-  grd.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 64, 64);
-  g.fillStyle = 'white';
-  g.fillRect(30, 4, 4, 56);
-  g.fillRect(4, 30, 56, 4);
-  return new THREE.CanvasTexture(c);
+function glowPoints(positions, size, colors) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(colors || new Float32Array(positions.length), 3));
+  const p = new THREE.Points(
+    g,
+    new THREE.PointsMaterial({
+      size,
+      map: glowTexture(),
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  p.frustumCulled = false;
+  return p;
 }
 
+// ---------- 꽃가루 ----------
 class Confetti {
   constructor(scene) {
-    this.count = 400;
-    const geo = new THREE.PlaneGeometry(0.14, 0.24);
-    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-    this.mesh = new THREE.InstancedMesh(geo, mat, this.count);
+    this.count = 360;
+    const geo = new THREE.PlaneGeometry(0.13, 0.22);
+    this.mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), this.count);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     this.p = Array.from({ length: this.count }, () => ({
@@ -215,22 +544,20 @@ class Confetti {
       life: 0,
     }));
     const col = new THREE.Color();
-    for (let i = 0; i < this.count; i++) {
-      this.mesh.setColorAt(i, col.setHex(NEON[i % NEON.length]));
-    }
+    for (let i = 0; i < this.count; i++) this.mesh.setColorAt(i, col.setHex(NEON[i % NEON.length]));
     this.cursor = 0;
     this.dummy = new THREE.Object3D();
     scene.add(this.mesh);
   }
 
-  burst(origin, n = 180, power = 1) {
+  burst(origin, n = 160, power = 1) {
     for (let i = 0; i < n; i++) {
       const p = this.p[this.cursor];
       this.cursor = (this.cursor + 1) % this.count;
       p.pos.copy(origin);
       const a = Math.random() * Math.PI * 2;
-      const s = (2 + Math.random() * 5) * power;
-      p.vel.set(Math.cos(a) * s * 0.6, 4 + Math.random() * 6 * power, Math.sin(a) * s * 0.4 + 1);
+      const s = (1.5 + Math.random() * 4) * power;
+      p.vel.set(Math.cos(a) * s * 0.7, 4 + Math.random() * 5 * power, Math.sin(a) * s * 0.4 + 0.8);
       p.rot.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
       p.spin.set(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5);
       p.life = 3 + Math.random() * 2;
@@ -245,7 +572,7 @@ class Confetti {
         p.life -= dt;
         p.vel.y -= 9 * dt;
         p.vel.multiplyScalar(1 - dt * 1.6);
-        p.vel.y = Math.max(p.vel.y, -1.6);
+        p.vel.y = Math.max(p.vel.y, -1.5);
         p.pos.addScaledVector(p.vel, dt);
         p.pos.x += Math.sin(p.life * 5 + i) * dt * 0.6;
         p.rot.x += p.spin.x * dt;
@@ -259,5 +586,143 @@ class Confetti {
       this.mesh.setMatrixAt(i, d.matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+// ---------- 둥실둥실 음표/하트 ----------
+function glyphTexture(ch, fill) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.font = 'bold 96px "Jua", system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineJoin = 'round';
+  g.lineWidth = 14;
+  g.strokeStyle = '#2a1233';
+  g.strokeText(ch, 64, 70);
+  g.fillStyle = fill;
+  g.fillText(ch, 64, 70);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+class Floaters {
+  constructor(scene) {
+    this.kinds = {
+      note: [glyphTexture('♪', '#ffe45e'), glyphTexture('♫', '#3ef2ff'), glyphTexture('♪', '#ff9bd0')],
+      heart: [glyphTexture('♥', '#ff3e7f'), glyphTexture('♥', '#ff8fc0')],
+      spark: [glyphTexture('✦', '#fff6a0')],
+    };
+    this.pool = Array.from({ length: 36 }, () => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+      s.visible = false;
+      s.userData = { life: 0, max: 1, vel: new THREE.Vector3(), phase: 0 };
+      scene.add(s);
+      return s;
+    });
+    this.cursor = 0;
+  }
+
+  emit(kind, origin, n = 4, spread = 0.8) {
+    const tex = this.kinds[kind];
+    for (let i = 0; i < n; i++) {
+      const s = this.pool[this.cursor];
+      this.cursor = (this.cursor + 1) % this.pool.length;
+      s.material.map = tex[i % tex.length];
+      s.material.needsUpdate = true;
+      s.position.copy(origin).add(new THREE.Vector3((Math.random() - 0.5) * spread, Math.random() * 0.3, (Math.random() - 0.5) * 0.3));
+      const u = s.userData;
+      u.life = u.max = 1.4 + Math.random() * 0.8;
+      u.vel.set((Math.random() - 0.5) * 0.6, 1.1 + Math.random() * 0.8, 0.2);
+      u.phase = Math.random() * 6;
+      u.delay = i * 0.12;
+      s.visible = false;
+    }
+  }
+
+  update(dt, time) {
+    for (const s of this.pool) {
+      const u = s.userData;
+      if (u.life <= 0) continue;
+      if (u.delay > 0) {
+        u.delay -= dt;
+        continue;
+      }
+      s.visible = true;
+      u.life -= dt;
+      s.position.addScaledVector(u.vel, dt);
+      s.position.x += Math.sin(time * 4 + u.phase) * dt * 0.4;
+      const t = 1 - u.life / u.max;
+      const pop = Math.min(1, t * 6);
+      s.scale.setScalar(0.45 * pop * (1 + Math.sin(time * 8 + u.phase) * 0.05));
+      s.material.opacity = Math.min(1, u.life * 2);
+      if (u.life <= 0) s.visible = false;
+    }
+  }
+}
+
+// ---------- 쾅! 만화 효과 ----------
+function burstTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const star = (r1, r2, n, fill) => {
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2;
+      const r = i % 2 === 0 ? r1 * (0.85 + ((i * 37) % 7) / 40) : r2;
+      g.lineTo(128 + Math.cos(a) * r, 128 + Math.sin(a) * r);
+    }
+    g.closePath();
+    g.fillStyle = fill;
+    g.fill();
+    g.lineWidth = 8;
+    g.lineJoin = 'round';
+    g.strokeStyle = '#2a1233';
+    g.stroke();
+  };
+  star(120, 70, 14, '#ffe45e');
+  star(78, 48, 12, '#ff9b3e');
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+class Pows {
+  constructor(scene) {
+    const tex = burstTexture();
+    this.pool = Array.from({ length: 3 }, () => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+      s.visible = false;
+      s.userData.life = 0;
+      scene.add(s);
+      return s;
+    });
+    this.cursor = 0;
+  }
+
+  pop(pos, size = 1.8) {
+    const s = this.pool[this.cursor];
+    this.cursor = (this.cursor + 1) % this.pool.length;
+    s.position.copy(pos);
+    s.userData.life = 1;
+    s.userData.size = size;
+    s.material.rotation = Math.random() * Math.PI;
+    s.visible = true;
+  }
+
+  update(dt) {
+    for (const s of this.pool) {
+      const u = s.userData;
+      if (u.life <= 0) continue;
+      u.life -= dt * 2.2;
+      const t = 1 - u.life;
+      const k = t < 0.25 ? t / 0.25 : 1;
+      s.scale.setScalar(u.size * (0.4 + 0.6 * k) * (1 + t * 0.15));
+      s.material.opacity = Math.min(1, u.life * 2.5);
+      if (u.life <= 0) s.visible = false;
+    }
   }
 }
