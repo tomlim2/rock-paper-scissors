@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>뽕짝 가위바위보 vs Claude</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Jua&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div id="hud">
+      <header id="title">
+        <h1><span>뽕</span><span>짝</span> 가위바위보</h1>
+        <p>vs Claude ✨</p>
+      </header>
+
+      <div id="score">
+        <div class="side you"><b id="s-you">0</b><small>님</small></div>
+        <div class="mid"><small>무승부</small><b id="s-draw">0</b></div>
+        <div class="side cpu"><b id="s-cpu">0</b><small>Claude</small></div>
+      </div>
+      <div id="streak"></div>
+
+      <div id="bubble"><span></span></div>
+      <div id="tag-you">님 손 👇</div>
+      <div id="call"></div>
+
+      <nav id="controls">
+        <button data-move="scissors"><i>✌️</i><span>가위</span><kbd>1</kbd></button>
+        <button data-move="rock"><i>✊</i><span>바위</span><kbd>2</kbd></button>
+        <button data-move="paper"><i>🖐️</i><span>보</span><kbd>3</kbd></button>
+      </nav>
+
+      <button id="music" title="음악 켜기/끄기">🎵</button>
+    </div>
+
+    <div id="start">
+      <div class="card">
+        <h2>✨ 뽕짝 가위바위보 ✨</h2>
+        <p>Claude랑 한 판 붙어요!<br />박자에 맞춰 <b>가위! 바위! 보!</b></p>
+        <button id="go">🎤 쿵짝 시작!</button>
+        <small>키보드 1 · 2 · 3 으로도 낼 수 있어요 (소리 켜주세요 🔊)</small>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
