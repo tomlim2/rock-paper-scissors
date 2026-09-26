@@ -39,8 +39,13 @@ src/
 
 ## 배포 (GitHub Pages)
 
+https://tomlim2.github.io/rock-paper-scissors/
+
+`v*` 태그를 push하면 GitHub Actions가 빌드해서 `gh-pages` 브랜치에 배포합니다.
+
 ```bash
-npm run deploy
+npm version patch   # 0.1.0 → 0.1.1 커밋 + v0.1.1 태그 생성 후 자동 push → 배포
+npm version minor   # 0.1.x → 0.2.0
 ```
 
-빌드한 `dist/`를 `gh-pages` 브랜치에 강제 push 합니다 → https://tomlim2.github.io/rock-paper-scissors/
+Actions 없이 로컬에서 바로 올리려면 `npm run deploy`.
