@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { toon, raw, glowTexture } from './toon.js';
+import { toon, raw, glowTexture, rbox } from './toon.js';
 
 export const NEON = [0xff3e7f, 0xffe45e, 0x3ef2ff, 0xb45cff, 0x5cff8a, 0xff9b3e];
 
@@ -11,8 +11,9 @@ export const MOODS = {
   draw: [0xc9a4ff, 0x8a4fe0],
 };
 
-const STAGE_R = 14;
-const STAGE_CZ = -12;
+const STAGE_W = 26;
+const STAGE_D = 10;
+const FRONT_Z = 2.4;
 const FLOOR_Y = -1.29;
 const HALL_Y = -2.4;
 
@@ -91,40 +92,49 @@ export class Stage {
     this.scene.add(back);
   }
 
-  // ---------- 금테 전구 링 ----------
+  // ---------- 금테 전구 액자 (네모) ----------
   buildMarquee() {
-    const center = new THREE.Vector3(0.4, 2.05, -6.6);
-    const rx = 3.2;
-    const ry = 2.55;
-    const pts = new THREE.EllipseCurve(0, 0, rx, ry).getPoints(128).map((p) => new THREE.Vector3(p.x, p.y, 0));
-    pts.pop();
-    const frame = new THREE.Mesh(
-      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 256, 0.07, 8, true),
-      toon(0xffc53d, { emissive: 0x4a2a00 }),
-    );
-    frame.position.copy(center);
-    this.scene.add(frame);
-
-    const N = 34;
-    this.bulbCount = N;
-    const bulbGeo = new THREE.SphereGeometry(0.1, 12, 10);
-    this.bulbs = new THREE.InstancedMesh(bulbGeo, new THREE.MeshBasicMaterial(), N);
-    const glowPos = new Float32Array(N * 3);
-    const m = new THREE.Matrix4();
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2;
-      const x = center.x + Math.cos(a) * rx;
-      const y = center.y + Math.sin(a) * ry;
-      m.makeTranslation(x, y, center.z + 0.1);
-      this.bulbs.setMatrixAt(i, m);
-      glowPos.set([x, y, center.z + 0.16], i * 3);
+    this.marquee = new THREE.Group();
+    this.marquee.position.set(0, 2.05, -6.6);
+    const W = 6.2;
+    const H = 4.9;
+    const T = 0.14;
+    const gold = toon(0xffc53d, { emissive: 0x4a2a00 });
+    for (const [w, h, x, y] of [
+      [W + T, T, 0, H / 2],
+      [W + T, T, 0, -H / 2],
+      [T, H + T, -W / 2, 0],
+      [T, H + T, W / 2, 0],
+    ]) {
+      const bar = new THREE.Mesh(rbox(w, h, T, 0.05), gold);
+      bar.position.set(x, y, 0);
+      this.marquee.add(bar);
     }
-    this.scene.add(this.bulbs);
-    this.bulbGlow = glowPoints(glowPos, 0.8);
-    this.scene.add(this.bulbGlow);
+
+    // 테두리를 따라 한 바퀴 도는 네모 전구
+    const pts = [];
+    const nx = Math.round(W / 0.42);
+    const ny = Math.round(H / 0.42);
+    for (let i = 0; i < nx; i++) pts.push([-W / 2 + (i / nx) * W, H / 2]);
+    for (let i = 0; i < ny; i++) pts.push([W / 2, H / 2 - (i / ny) * H]);
+    for (let i = 0; i < nx; i++) pts.push([W / 2 - (i / nx) * W, -H / 2]);
+    for (let i = 0; i < ny; i++) pts.push([-W / 2, -H / 2 + (i / ny) * H]);
+    this.bulbCount = pts.length;
+    this.bulbs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.17, 0.17, 0.1), new THREE.MeshBasicMaterial(), pts.length);
+    const glowPos = new Float32Array(pts.length * 3);
+    const m = new THREE.Matrix4();
+    pts.forEach(([x, y], i) => {
+      m.makeTranslation(x, y, 0.09);
+      this.bulbs.setMatrixAt(i, m);
+      glowPos.set([x, y, 0.15], i * 3);
+    });
+    this.marquee.add(this.bulbs);
+    this.bulbGlow = glowPoints(glowPos, 0.75);
+    this.marquee.add(this.bulbGlow);
+    this.scene.add(this.marquee);
   }
 
-  // ---------- 디스코 타일 무대 ----------
+  // ---------- 디스코 타일 무대 (네모 단상) ----------
   buildStage() {
     this.floorMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -174,38 +184,40 @@ export class Stage {
           for (int i = 0; i < 2; i++) {
             col += uBeamCol[i] * smoothstep(1.5, 0.0, length(w - uBeamPos[i])) * 0.3;
           }
-          float sd = length((w - uShadow) * vec2(1.0, 1.6));
-          col *= 1.0 - 0.6 * smoothstep(1.3, 0.25, sd);
+          // 네모난 몸이라 그림자도 둥근 네모
+          vec2 sd = abs(w - uShadow) - vec2(0.95, 0.55);
+          float box = length(max(sd, 0.0)) + min(max(sd.x, sd.y), 0.0);
+          col *= 1.0 - 0.6 * smoothstep(0.45, -0.1, box);
           col *= mix(0.4, 1.0, smoothstep(-7.0, -1.5, vWorld.z));
-          col *= mix(0.5, 1.0, smoothstep(9.5, 4.5, abs(vWorld.x)));
+          col *= mix(0.5, 1.0, smoothstep(10.5, 5.0, abs(vWorld.x)));
           gl_FragColor = vec4(col, 1.0);
         }
       `,
     });
     const apron = toon(0x9e1742);
-    const stage = new THREE.Mesh(new THREE.CylinderGeometry(STAGE_R, STAGE_R, 1.1, 180), [apron, this.floorMat, apron]);
-    stage.position.set(0, FLOOR_Y - 0.55, STAGE_CZ);
+    const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, 1.1, STAGE_D), [apron, apron, this.floorMat, apron, apron, apron]);
+    stage.position.set(0, FLOOR_Y - 0.55, FRONT_Z - STAGE_D / 2);
     this.scene.add(stage);
 
-    const trim = new THREE.Mesh(
-      new THREE.CylinderGeometry(STAGE_R + 0.03, STAGE_R + 0.03, 0.16, 180, 1, true),
-      toon(0xffc53d, { emissive: 0x4a2a00 }),
-    );
-    trim.position.set(0, FLOOR_Y - 0.09, STAGE_CZ);
+    const gold = toon(0xffc53d, { emissive: 0x4a2a00 });
+    const trim = new THREE.Mesh(rbox(STAGE_W, 0.16, 0.14, 0.05), gold);
+    trim.position.set(0, FLOOR_Y - 0.08, FRONT_Z + 0.02);
     this.scene.add(trim);
+    const base = new THREE.Mesh(rbox(STAGE_W, 0.12, 0.14, 0.04), gold);
+    base.position.set(0, FLOOR_Y - 1.02, FRONT_Z + 0.02);
+    this.scene.add(base);
 
-    // 앞 무대 조명
+    // 앞 무대 조명 (네모 전구 한 줄)
     const xs = [];
-    for (let x = -9; x <= 9.01; x += 0.9) xs.push(x);
+    for (let x = -11; x <= 11.01; x += 0.9) xs.push(x);
     this.footCount = xs.length;
     const glowPos = new Float32Array(xs.length * 3);
-    this.foots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.08, 10, 8), new THREE.MeshBasicMaterial(), xs.length);
+    this.foots = new THREE.InstancedMesh(new THREE.BoxGeometry(0.16, 0.16, 0.08), new THREE.MeshBasicMaterial(), xs.length);
     const m = new THREE.Matrix4();
     xs.forEach((x, i) => {
-      const z = STAGE_CZ + Math.sqrt(STAGE_R * STAGE_R - x * x) + 0.05;
-      m.makeTranslation(x, FLOOR_Y - 0.3, z);
+      m.makeTranslation(x, FLOOR_Y - 0.4, FRONT_Z + 0.05);
       this.foots.setMatrixAt(i, m);
-      glowPos.set([x, FLOOR_Y - 0.3, z + 0.05], i * 3);
+      glowPos.set([x, FLOOR_Y - 0.4, FRONT_Z + 0.12], i * 3);
     });
     this.scene.add(this.foots);
     this.footGlow = glowPoints(glowPos, 0.6);
@@ -265,22 +277,58 @@ export class Stage {
     this.scene.add(tube);
   }
 
-  // ---------- 미러볼 ----------
+  // ---------- 미러 큐브 (네모난 미러볼) ----------
   buildDisco() {
+    const n = 4;
+    const size = 1.0;
+    const t = size / n;
+    const Z = new THREE.Vector3(0, 0, 1);
+    const geos = [];
+    let seed = 7;
+    for (const [x, y, z] of [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ]) {
+      const N = new THREE.Vector3(x, y, z);
+      const q = new THREE.Quaternion().setFromUnitVectors(Z, N);
+      const U = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+      const V = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const g = new THREE.BoxGeometry(t * 0.9, t * 0.9, 0.04);
+          // 타일마다 살짝 다른 각도 → 반사가 반짝반짝 흩어짐
+          const jitter = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler((hash(seed++) - 0.5) * 0.3, (hash(seed++) - 0.5) * 0.3, 0),
+          );
+          const p = N.clone()
+            .multiplyScalar(size / 2)
+            .addScaledVector(U, (i + 0.5) * t - size / 2)
+            .addScaledVector(V, (j + 0.5) * t - size / 2);
+          g.applyMatrix4(new THREE.Matrix4().compose(p, q.clone().multiply(jitter), new THREE.Vector3(1, 1, 1)));
+          geos.push(g);
+        }
+      }
+    }
     this.disco = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.62, 2),
-      new THREE.MeshStandardMaterial({ color: 0xe8e8f0, metalness: 1, roughness: 0.12, flatShading: true }),
+      mergeGeometries(geos),
+      new THREE.MeshStandardMaterial({ color: 0xe8e8f0, metalness: 1, roughness: 0.12 }),
     );
+    this.disco.add(new THREE.Mesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), new THREE.MeshBasicMaterial({ color: 0x2a2436 })));
+    this.disco.rotation.x = 0.45;
     this.scene.add(this.disco);
     this.string = new THREE.Mesh(
       new THREE.CylinderGeometry(0.015, 0.015, 6),
       new THREE.MeshBasicMaterial({ color: 0xbbbbcc }),
     );
     this.scene.add(this.string);
-    this.setLayout(false);
     const glints = new Float32Array(6 * 3);
     this.glints = glowPoints(glints, 0.5);
     this.scene.add(this.glints);
+    this.setLayout(false);
   }
 
   // ---------- 무대 조명 빛줄기 ----------
@@ -331,10 +379,10 @@ export class Stage {
 
   // ---------- 관객석 + 응원봉 ----------
   buildCrowd() {
-    const head = new THREE.SphereGeometry(0.3, 12, 10);
+    // 네모네모 관객
+    const head = rbox(0.56, 0.54, 0.5, 0.15);
     head.translate(0, 1.55, 0);
-    const torso = new THREE.CapsuleGeometry(0.4, 0.7, 4, 10);
-    torso.scale(1, 1, 0.7);
+    const torso = rbox(0.86, 1.0, 0.52, 0.18);
     torso.translate(0, 0.72, 0);
     const person = mergeGeometries([head, torso]);
     const people = [];
@@ -370,7 +418,7 @@ export class Stage {
     const sticks = people.filter((p) => p.stick);
     this.sticks = sticks;
     this.stickMesh = new THREE.InstancedMesh(
-      new THREE.CapsuleGeometry(0.05, 0.5, 4, 8),
+      rbox(0.1, 0.6, 0.1, 0.04),
       new THREE.MeshBasicMaterial({ color: 0xffffff }),
       sticks.length,
     );
@@ -390,9 +438,17 @@ export class Stage {
     this._s = new THREE.Vector3();
   }
 
-  setLayout(portrait) {
-    this.disco.position.set(portrait ? 2.4 : -3.9, portrait ? 4.0 : 4.3, -3);
+  setLayout(portrait, claudeX = 0, camX = 0) {
+    this.centerX = claudeX;
+    // 카메라에서 봤을 때 액자가 Claude 뒤에 오도록 시차 보정
+    this.marquee.position.x = camX + (claudeX - camX) * 1.45;
+    this.disco.position.set(portrait ? 1.9 : 3.9, portrait ? 4.1 : 4.4, -3);
     this.string.position.set(this.disco.position.x, this.disco.position.y + 3.3, -3);
+  }
+
+  /** 님 손(=내 눈과 내 손 사이)을 가리는 관객은 비켜주기 */
+  clearCrowd(x, half) {
+    for (const p of this.people) p.hidden = Math.abs(p.x - x) < half && p.z < 9;
   }
 
   setMood(name) {
@@ -449,7 +505,7 @@ export class Stage {
     fglow.needsUpdate = true;
 
     // 미러볼 + 반짝
-    this.disco.rotation.y += dt * 0.7;
+    this.disco.rotation.y += dt * 0.6;
     const gp = this.glints.geometry.attributes.position;
     const gc = this.glints.geometry.attributes.color;
     for (let i = 0; i < 6; i++) {
@@ -465,7 +521,7 @@ export class Stage {
     // 빛줄기 흔들기
     this.beams.forEach((bm, i) => {
       const { sx, target } = bm.userData;
-      target.set(-sx * 0.2 + Math.sin(time * 0.9 + i * 2) * 2.4, FLOOR_Y, Math.cos(time * 0.7 + i) * 1.6);
+      target.set((this.centerX || 0) + 0.8 - sx * 0.2 + Math.sin(time * 0.9 + i * 2) * 2.4, FLOOR_Y, Math.cos(time * 0.7 + i) * 1.6);
       const dir = this._v.copy(target).sub(bm.position).normalize();
       bm.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
       this.floorMat.uniforms.uBeamPos.value[i].set(target.x, target.z);
@@ -478,7 +534,7 @@ export class Stage {
     const q = this._q;
     this.people.forEach((p, i) => {
       const y = HALL_Y + (p.jump ? hop * hop * 0.14 : 0);
-      s.setScalar(p.s);
+      s.setScalar(p.hidden ? 0 : p.s);
       q.identity();
       m.compose(this._v.set(p.x, y, p.z), q, s);
       this.crowd.setMatrixAt(i, m);
@@ -496,9 +552,9 @@ export class Stage {
       // 캡슐 중심 = 손 위치 + 막대 방향 * 0.3
       const cx = bx - Math.sin(ang) * 0.3;
       const cy = by + Math.cos(ang) * 0.3;
-      m.compose(this._v.set(cx, cy, p.z), q, s.setScalar(1));
+      m.compose(this._v.set(cx, cy, p.z), q, s.setScalar(p.hidden ? 0 : 1));
       this.stickMesh.setMatrixAt(i, m);
-      sp.setXYZ(i, bx - Math.sin(ang) * 0.42, by + Math.cos(ang) * 0.42, p.z + 0.05);
+      sp.setXYZ(i, bx - Math.sin(ang) * 0.42, p.hidden ? -100 : by + Math.cos(ang) * 0.42, p.z + 0.05);
     });
     this.stickMesh.instanceMatrix.needsUpdate = true;
     sp.needsUpdate = true;

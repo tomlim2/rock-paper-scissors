@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import './style.css';
 import { Music } from './audio.js';
-import { Hand } from './hand.js';
+import { Hand, thumbUpQuat } from './hand.js';
 import { ClaudeBuddy } from './claude.js';
 import { Stage } from './stage.js';
 
@@ -53,24 +53,30 @@ const stage = new Stage(scene);
 const music = new Music({ musicOn: prefs.get('bgm', false), sfxOn: prefs.get('sfx', true) });
 
 const claude = new ClaudeBuddy();
-claude.root.position.set(0.8, 0, -0.2);
+claude.root.position.set(-0.85, 0, -0.2);
 scene.add(claude.root, claude.world);
-stage.setShadow(0.8, 0.05);
 
-// Claude 손 (고무호스 팔로 몸에 연결)
-const cpuHand = new Hand({ color: 0xe8825c, cuffRing: 0xf6a27c });
-cpuHand.root.position.set(-0.72, 0.78, 0.95);
-cpuHand.root.rotation.set(0.1, 0.4, 0.3);
+// Claude 손: 님 손 쪽으로 옆으로 뻗고 엄지가 위 (🤜), 큐브 팔로 몸에 연결
+const cpuHand = new Hand({ color: 0xe8825c, cuffRing: 0xf6a27c, thumbTop: true });
 cpuHand.root.scale.setScalar(0.8);
 scene.add(cpuHand.root);
 claude.attachHand(cpuHand);
+const cpuBase = { pos: new THREE.Vector3(), quat: thumbUpQuat(new THREE.Vector3(1, -0.1, 0.35)) };
 
-// 님 손 (객석에서 쑥 올라온 흰 장갑)
+// 님 손: 오른쪽 아래 객석에서 쑥 올라온 흰 장갑 (오른손)
 const youHand = new Hand({ color: 0xfffaf2, cuff: 0x3ea8ff, sleeve: 3.4, mirror: true });
-youHand.root.position.set(-2.7, 0.5, 2.7);
-youHand.root.rotation.set(-0.15, 0.55, -0.28);
 youHand.root.scale.setScalar(0.88);
 scene.add(youHand.root);
+const youBase = { pos: new THREE.Vector3(), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.15, -0.55, 0.28)) };
+
+const zAxis = new THREE.Vector3(0, 0, 1);
+const qTilt = new THREE.Quaternion();
+/** 기본 자세에서 위로 들었다(lift) 손목을 까딱(tilt) */
+function placeHand(hand, base, lift, tilt) {
+  hand.root.position.copy(base.pos);
+  hand.root.position.y += lift;
+  hand.root.quaternion.copy(base.quat).premultiply(qTilt.setFromAxisAngle(zAxis, tilt));
+}
 
 function layout() {
   const w = innerWidth;
@@ -85,18 +91,19 @@ function layout() {
   const halfW = portrait ? 2.6 : 3.3;
   const dist = Math.max(9.4, halfW / tanH);
   const extra = dist - 9.4;
-  const cx = portrait ? 0.05 : -0.4;
-  camBase.set(cx - (portrait ? 0 : 0.05), 2.4 + extra * 0.72, dist);
+  const cx = portrait ? -0.05 : 0.35;
+  camBase.set(cx + (portrait ? 0 : 0.05), 2.4 + extra * 0.72, dist);
   camTarget.set(cx, 0.95 - extra * 0.36, 0);
   scene.fog.near = dist + 9;
   scene.fog.far = dist + 26;
-  // 세로 화면은 폭이 좁으니 셋을 가운데로 모음
-  const claudeX = portrait ? 0.62 : 0.8;
+  // Claude는 왼쪽, 두 손은 오른쪽에서 맞붙음. 세로 화면은 좁으니 가운데로 모음
+  const claudeX = portrait ? -0.55 : -0.85;
   claude.root.position.x = claudeX;
-  stage.setShadow(claudeX, 0.05);
-  cpuHand.root.position.set(claudeX - (portrait ? 1.42 : 1.52), portrait ? 0.86 : 0.78, 0.95);
-  youHand.root.position.set(portrait ? -1.45 : -2.7, portrait ? -0.05 : 0.5, portrait ? 2.9 : 2.7);
-  stage.setLayout(portrait);
+  stage.setShadow(claudeX, -0.05);
+  cpuBase.pos.set(claudeX + (portrait ? 1.72 : 2.15), portrait ? 0.62 : 0.55, 1.0);
+  youBase.pos.set(portrait ? 1.36 : 2.75, portrait ? 0.0 : 0.45, portrait ? 2.9 : 2.7);
+  stage.setLayout(portrait, claudeX, camBase.x);
+  stage.clearCrowd(youBase.pos.x + (portrait ? 0.4 : 0.5), portrait ? 1.0 : 1.3);
   camera.fov = baseFov;
   camera.updateProjectionMatrix();
 }
@@ -255,7 +262,7 @@ function reveal(you, cpu) {
   youHand.setPose(you, true);
   cpuHand.setPose(cpu, true);
   stage.pows.pop(youHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0, 0.3, -0.4)), 2.2);
-  stage.pows.pop(cpuHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0, 0.25, -0.35)), 1.7);
+  stage.pows.pop(cpuHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0.25, 0.1, -0.35)), 1.7);
   if (!reduceMotion) {
     punch = 1;
     shake = 1;
@@ -275,7 +282,7 @@ function reveal(you, cpu) {
       showCall(streak >= 3 ? `${streak}연승!!` : '이겼다!!', 'win', sub);
       claude.setExpression('sad');
       stage.setMood('win');
-      stage.confetti.burst(youHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(0.3, 0.8, 0)), 200, 1);
+      stage.confetti.burst(youHand.root.getWorldPosition(tmpV).add(new THREE.Vector3(-0.3, 0.8, 0)), 200, 1);
       music.fanfare(music.now);
       say(streak >= 3 ? pick(LINES.streak) : pick(LINES.lose));
       energy = 1.4;
@@ -286,7 +293,7 @@ function reveal(you, cpu) {
       showCall('졌다…', 'lose', sub);
       claude.setExpression('cool');
       stage.setMood('lose');
-      stage.confetti.burst(new THREE.Vector3(0.8, 1.6, 0), 90, 0.7);
+      stage.confetti.burst(new THREE.Vector3(claude.root.position.x, 1.6, 0), 90, 0.7);
       music.sad(music.now);
       say(lastWasRead && Math.random() < 0.6 ? pick(LINES.read) : pick(LINES.win));
       energy = 1.6;
@@ -297,7 +304,8 @@ function reveal(you, cpu) {
       showCall('비겼당~', 'draw', sub);
       claude.setExpression(Math.random() < 0.5 ? 'shock' : 'happy');
       stage.setMood('draw');
-      stage.floaters.emit('heart', new THREE.Vector3(-1.4, 1.4, 1.6), 6, 1.6);
+      const mid = cpuHand.root.getWorldPosition(tmpV).lerp(youHand.root.getWorldPosition(new THREE.Vector3()), 0.5);
+      stage.floaters.emit('heart', mid.add(new THREE.Vector3(0, 0.6, 0)), 6, 1.6);
       music.boing(music.now);
       say(pick(LINES.draw));
       energy = 1.1;
@@ -394,7 +402,7 @@ addEventListener('pointermove', (e) => {
 // ---------- 루프 ----------
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
-const headAnchor = new THREE.Vector3(0.35, 1.75, 0);
+const headAnchor = new THREE.Vector3(-0.55, 1.35, 0);
 const micHead = new THREE.Vector3();
 let idleChat = 6;
 let beat = 0;
@@ -433,16 +441,15 @@ function tick() {
   energy += ((state === 'intro' ? 0.7 : 1) - energy) * dt * 0.5;
   stage.update(dt, time, phase, beat, reduceMotion);
 
-  // 손 흔들기: 박 사이에 올렸다가 정박에 쾅
+  // 손 흔들기: 박 사이에 올렸다가 정박에 쾅 (손목도 까딱)
   const up = Math.sin(phase * Math.PI);
-  cpuHand.lift = shaking ? up * 0.42 : up * 0.05;
-  youHand.lift = shaking ? up * 0.42 : up * 0.05;
-  cpuHand.root.rotation.z = 0.3 + (shaking ? up * 0.22 : Math.sin(time * 2.2) * 0.05);
-  youHand.root.rotation.z = -0.28 - (shaking ? up * 0.22 : Math.sin(time * 2.2 + 1) * 0.05);
+  const lift = shaking ? up * 0.42 : up * 0.05;
+  placeHand(cpuHand, cpuBase, lift, shaking ? up * 0.35 : Math.sin(time * 2.2) * 0.05);
+  placeHand(youHand, youBase, lift, shaking ? up * 0.22 : Math.sin(time * 2.2 + 1) * 0.05);
   cpuHand.update(dt);
   youHand.update(dt);
 
-  claude.look.lerp(state === 'countdown' ? tmp.set(-0.8, 0.1, 0) : pointer, 0.1);
+  claude.look.lerp(state === 'countdown' ? tmp.set(0.8, -0.1, 0) : pointer, 0.1);
   claude.update(dt, time, phase, beat, energy);
 
   // 카메라: 살랑살랑 + 공개 순간 살짝 줌인/흔들
@@ -462,14 +469,14 @@ function tick() {
     camera.updateProjectionMatrix();
   }
 
-  // 말풍선을 Claude 머리 옆에 붙이기 (꼬리는 머리를 가리킴)
+  // 말풍선은 Claude 머리 왼쪽 위 (가운데 큰 글씨·오른쪽 손들과 안 겹치게), 꼬리는 머리를 가리킴
   const [hx, hy] = toScreen(claude.root, headAnchor);
   const bw = bubble.offsetWidth;
   const bh = bubble.offsetHeight;
-  const left = Math.max(12, Math.min(hx - 18, innerWidth - bw - 12));
+  const left = Math.max(12, Math.min(hx + 28 - bw, innerWidth - bw - 12));
   bubble.style.left = `${left}px`;
-  bubble.style.top = `${Math.max(8, hy - bh - 16)}px`;
-  bubble.style.setProperty('--tail', `${Math.max(14, Math.min(hx - left - 8, bw - 28))}px`);
+  bubble.style.top = `${Math.max(8, hy - bh - 14)}px`;
+  bubble.style.setProperty('--tail', `${Math.max(14, Math.min(hx - left - 10, bw - 30))}px`);
 
   if (bubbleTimer > 0) {
     bubbleTimer -= dt;

@@ -304,7 +304,7 @@ button {
   background: #fff;
   border-right: 3px solid var(--ink);
   border-bottom: 3px solid var(--ink);
-  transform: skewX(-25deg) rotate(45deg);
+  transform: skewX(25deg) rotate(45deg);
   transform-origin: center;
   translate: 0 -6px;
 }
@@ -562,6 +562,9 @@ button {
   }
   #title {
     padding: 0 70px;
+  }
+  #call {
+    top: 19%;
   }
   #board {
     top: auto;

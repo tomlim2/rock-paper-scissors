@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 function makeGradient(levels) {
   const data = new Uint8Array(levels.length * 4);
@@ -10,6 +11,9 @@ function makeGradient(levels) {
 }
 
 const gradient = makeGradient([110, 190, 255]);
+
+/** 모서리가 둥근 큐브 (반지름은 가장 짧은 변의 절반까지로 자동 제한) */
+export const rbox = (w, h, d, r = 0.08, seg = 3) => new RoundedBoxGeometry(w, h, d, seg, r);
 
 export const toon = (color, extra = {}) =>
   new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...extra });
