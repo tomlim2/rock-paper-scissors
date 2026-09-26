@@ -442,7 +442,7 @@ export class Stage {
     this.centerX = claudeX;
     // 카메라에서 봤을 때 액자가 Claude 뒤에 오도록 시차 보정
     this.marquee.position.x = camX + (claudeX - camX) * 1.45;
-    this.disco.position.set(portrait ? 1.9 : 3.9, portrait ? 4.1 : 4.4, -3);
+    this.disco.position.set(portrait ? 1.9 : -3.3, portrait ? 4.1 : 4.4, -3);
     this.string.position.set(this.disco.position.x, this.disco.position.y + 3.3, -3);
   }
 

@@ -231,10 +231,11 @@ export class ClaudeBuddy {
 
     // ---------- 팔 ----------
     const armMat = toon(ORANGE);
-    this.shoulderHand = new THREE.Object3D(); // 가위바위보 손 (화면 오른쪽)
-    this.shoulderHand.position.set(0.98, -0.2, 0.2);
-    this.shoulderMic = new THREE.Object3D(); // 마이크 손 (화면 왼쪽)
-    this.shoulderMic.position.set(-0.98, -0.2, 0.2);
+    // 님과 마주 보고 오른손으로 냄 → 화면에서는 Claude 몸 왼쪽. 마이크는 왼손(화면 오른쪽)
+    this.shoulderHand = new THREE.Object3D();
+    this.shoulderHand.position.set(-0.98, -0.2, 0.2);
+    this.shoulderMic = new THREE.Object3D();
+    this.shoulderMic.position.set(0.98, -0.2, 0.2);
     this.bob.add(this.shoulderHand, this.shoulderMic);
     this.armHand = new Limb(0.3, armMat);
     this.armMic = new Limb(0.26, armMat);
@@ -259,8 +260,8 @@ export class ClaudeBuddy {
     this.mic = mic;
     this.mitten.add(mic);
     this.root.add(this.mitten);
-    this.mitIdle = new THREE.Vector3(-1.55, -0.3, 0.6);
-    this.mitSing = new THREE.Vector3(-0.42, -0.4, 1.25);
+    this.mitIdle = new THREE.Vector3(1.5, 0.0, 0.6);
+    this.mitSing = new THREE.Vector3(0.42, -0.4, 1.25);
     this.sing = 0;
     this.singTarget = 0;
 
@@ -401,12 +402,12 @@ export class ClaudeBuddy {
     const swing = Math.sin(time * 4.6) * 0.08 * energy;
     this.mitten.position.lerpVectors(this.mitIdle, this.mitSing, this.sing);
     this.mitten.position.y += swing * (1 - this.sing) + this.bob.position.y * 0.8;
-    this.mitten.rotation.z = THREE.MathUtils.lerp(0.2 - swing, -0.4, this.sing);
-    this.mic.rotation.set(THREE.MathUtils.lerp(0.2, -0.5, this.sing), 0, THREE.MathUtils.lerp(0.35, -0.55, this.sing));
+    this.mitten.rotation.z = THREE.MathUtils.lerp(-0.2 + swing, 0.4, this.sing);
+    this.mic.rotation.set(THREE.MathUtils.lerp(0.2, -0.5, this.sing), 0, THREE.MathUtils.lerp(-0.35, 0.55, this.sing));
     this.shoulderMic.getWorldPosition(a);
     this.mitten.getWorldPosition(c);
     b.lerpVectors(a, c, 0.5);
-    b.x -= 0.12;
+    b.x += 0.12;
     b.y -= 0.25;
     this.armMic.update(a, b, c);
 
@@ -414,9 +415,9 @@ export class ClaudeBuddy {
       this.shoulderHand.getWorldPosition(a);
       this.hand.wrist.getWorldPosition(c);
       b.lerpVectors(a, c, 0.5);
-      b.x += 0.08;
-      b.y -= 0.32;
-      b.z += 0.12;
+      b.x -= 0.1;
+      b.y -= 0.3;
+      b.z += 0.1;
       this.armHand.update(a, b, c);
     }
   }
