@@ -36,3 +36,11 @@ src/
   stage.js   햇살 배경, 디스코 바닥, 커튼, 미러볼, 꽃가루
   toon.js    툰 셰이딩 + 외곽선
 ```
+
+## 배포 (GitHub Pages)
+
+```bash
+npm run deploy
+```
+
+빌드한 `dist/`를 `gh-pages` 브랜치에 강제 push 합니다 → https://tomlim2.github.io/rock-paper-scissors/
